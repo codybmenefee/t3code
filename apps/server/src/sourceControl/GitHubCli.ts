@@ -191,6 +191,7 @@ export function fromGitHubApiError(cwd: string, error: GitHubApi.GitHubApiError)
     case "GitHubCliMissingError":
       return new GitHubCliUnavailableError(context);
     case "GitHubNotSignedInError":
+    case "GitHubHostDisabledError":
     case "GitHubApiAuthenticationError":
       return new GitHubCliAuthenticationError(context);
     case "GitHubApiRateLimitError":
