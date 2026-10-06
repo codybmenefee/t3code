@@ -104,7 +104,12 @@ describe("WebTools", () => {
           url: "https://api.firecrawl.dev/v2/scrape",
           authorization: "Bearer fc-test",
           apiKey: undefined,
-          body: { url: "https://example.com", formats: ["markdown"], onlyMainContent: true },
+          body: {
+            url: "https://example.com",
+            formats: ["markdown"],
+            onlyMainContent: true,
+            maxAge: 0,
+          },
         },
       ]);
       expect(result).toMatchObject({

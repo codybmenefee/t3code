@@ -327,7 +327,9 @@ const make = Effect.gen(function* () {
           "fetch",
           "https://api.firecrawl.dev/v2/scrape",
           firecrawlHeaders(settings.firecrawlApiKey),
-          { url, formats: ["markdown"], onlyMainContent: true },
+          // Firecrawl serves cached pages up to two days old by default; agents
+          // fetch to read the page as it is now (a package's latest version, docs).
+          { url, formats: ["markdown"], onlyMainContent: true, maxAge: 0 },
           FirecrawlScrapeResponse,
         ).pipe(
           Effect.flatMap(({ data }) =>
