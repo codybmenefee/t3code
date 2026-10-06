@@ -3063,9 +3063,20 @@ export function makeOpenCodeAdapterV2(
               // Only a row that already carries a native session can be
               // resumed; a placeholder without one still needs session.create.
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
-                return yield* runtimeSession.resumeThread({
+                const resumed = yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
                 });
+                // A session keeps the rules it was created with; the web provider
+                // or runtime policy may have changed since.
+                const sessionId = nativeThreadId(resumed);
+                const permission = openCodePermissionRules(
+                  threadInput.runtimePolicy,
+                  nativeWebToolsDisabled,
+                );
+                yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                  client.session.update({ sessionID: sessionId, permission }),
+                );
+                return resumed;
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).

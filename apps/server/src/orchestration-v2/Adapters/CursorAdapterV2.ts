@@ -325,6 +325,8 @@ export function makeCursorAgentOptions(input: {
         enabled: policy.sandboxEnabled,
       },
       enableAgentRetries: true,
+      // Task children only receive the parent's tool exclusions when this is set.
+      ...(nativeWebToolsDisabled ? { subagentInherit: {} } : {}),
     },
     ...(mcpServers === undefined ? {} : { mcpServers }),
     // Not persisted by the SDK, so every create and resume passes it again.

@@ -873,10 +873,13 @@ describe("CursorAdapterV2", () => {
     });
     try {
       assert.deepEqual(options().disallowedTools, ["webSearch", "webFetch"]);
+      // Native Task subagents only inherit the exclusions through subagentInherit.
+      assert.deepEqual(options().local?.subagentInherit, {});
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
     assert.isUndefined(options().disallowedTools);
+    assert.isUndefined(options().local?.subagentInherit);
   });
 
   it("injects thread-scoped MCP credentials without logging them", () => {

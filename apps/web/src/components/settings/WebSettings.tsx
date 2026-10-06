@@ -85,15 +85,34 @@ function WebProviderRow() {
  */
 function WebApiKeyRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const saved = useEnvironmentSettings(environmentId, (settings) => settings.web);
+  if (saved.provider === "builtin") return null;
+  return (
+    // A draft belongs to one provider's key; switching must not save it as another's.
+    <WebApiKeyField
+      key={saved.provider}
+      environmentId={environmentId}
+      provider={saved.provider}
+      isSaved={saved[WEB_TOOL_API_KEYS[saved.provider].field].length > 0}
+    />
+  );
+}
+
+function WebApiKeyField({
+  environmentId,
+  provider,
+  isSaved,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: Exclude<WebToolProvider, "builtin">;
+  readonly isSaved: boolean;
+}) {
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save web provider API key",
   });
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  if (saved.provider === "builtin") return null;
-  const info = WEB_TOOL_API_KEYS[saved.provider];
-  const isSaved = saved[info.field].length > 0;
-  const label = WEB_TOOL_PROVIDER_LABELS[saved.provider];
+  const info = WEB_TOOL_API_KEYS[provider];
+  const label = WEB_TOOL_PROVIDER_LABELS[provider];
 
   const save = async (key: string) => {
     setSaving(true);
