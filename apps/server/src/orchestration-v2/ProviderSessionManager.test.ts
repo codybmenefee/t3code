@@ -294,6 +294,8 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeEvent?: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
+    readonly onEventStreamExit?: Effect.Effect<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -354,7 +356,10 @@ function makeProviderAdapter(
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events).pipe(
+                Stream.tap(options.beforeEvent ?? (() => Effect.void)),
+                Stream.ensuring(options.onEventStreamExit ?? Effect.void),
+              ),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -410,6 +415,8 @@ function layerTest(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly beforeEvent?: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
+  readonly onEventStreamExit?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -432,6 +439,10 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.beforeEvent === undefined ? {} : { beforeEvent: input.beforeEvent }),
+      ...(input.onEventStreamExit === undefined
+        ? {}
+        : { onEventStreamExit: input.onEventStreamExit }),
     }),
   );
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
@@ -1051,11 +1062,13 @@ it.effect(
     }),
 );
 
-it.effect.each(["release", "event-pump"] as const)(
+it.effect.each(["release", "event-pump", "pending-offer"] as const)(
   "ProviderSessionManagerV2 fails a full paused subscriber without blocking %s cleanup",
   (scenario) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const pendingEventRead = yield* Deferred.make<void>();
+      const eventStreamClosed = yield* Deferred.make<void>();
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1077,6 +1090,7 @@ it.effect.each(["release", "event-pump"] as const)(
           runtimePolicy,
         });
         const paused = yield* runtime.subscribeEvents!;
+        yield* Effect.addFinalizer(() => paused.close);
         const observer = yield* runtime.subscribeEvents!;
         const filled = yield* observer.events.pipe(
           Stream.take(512),
@@ -1107,8 +1121,32 @@ it.effect.each(["release", "event-pump"] as const)(
         );
         // Publication reaches the observer only after filling the paused queue.
         yield* Fiber.join(filled);
+        if (scenario === "pending-offer") {
+          const runId = idAllocator.derive.run({ threadId, ordinal: 2 });
+          yield* runtime.startTurn({
+            appThread: (yield* projections.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 2 }),
+              text: "continue",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* Queue.offer(adapterQueue!, { ...terminal, runOrdinal: 2 });
+          yield* Deferred.await(pendingEventRead);
+        }
         assert.isDefined(McpProviderSession.readMcpProviderSession(threadId));
-        if (scenario === "release") {
+        if (scenario !== "event-pump") {
           yield* manager.release({
             providerSessionId,
             reason: "runtime_error",
@@ -1141,17 +1179,35 @@ it.effect.each(["release", "event-pump"] as const)(
           (yield* projections.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
           "error",
         );
+        const streamClosedBeforeDrain = yield* Deferred.isDone(eventStreamClosed);
         const drained = yield* Ref.make<ReadonlyArray<ProviderAdapterV2Event>>([]);
         const exit = yield* paused.events.pipe(
           Stream.runForEach((event) => Ref.update(drained, (events) => [...events, event])),
           Effect.exit,
         );
         assert.lengthOf(yield* Ref.get(drained), 512);
+        if (scenario === "pending-offer") assert.isTrue(streamClosedBeforeDrain);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit))
           assert.instanceOf(Cause.squash(exit.cause), ProviderAdapterEventStreamError);
       });
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            // Schedule notification so release cannot reenter the read callback.
+            beforeEvent: (event) =>
+              event.type === "turn.terminal" && event.runOrdinal === 2
+                ? Deferred.succeed(pendingEventRead, undefined).pipe(
+                    Effect.forkChild,
+                    Effect.asVoid,
+                  )
+                : Effect.void,
+            onEventStreamExit: Deferred.succeed(eventStreamClosed, undefined).pipe(Effect.asVoid),
+          }),
+        ),
+      );
     }),
 );
 
@@ -2431,6 +2487,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       yield* eventSink.write({
         events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
       });
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
       const runtime = yield* manager.open({
         threadId,
         providerSessionId,
@@ -2438,7 +2495,17 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         runtimePolicy,
       });
       yield* runtime.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
-      yield* Effect.yieldNow;
+      const released = yield* eventSink
+        .stream({ threadId, afterSequence, eventType: "provider-session.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-session.updated" &&
+              stored.event.payload.status === "error",
+          ),
+          Stream.runHead,
+        );
+      assert.isTrue(Option.isSome(released));
 
       const liveSession = yield* manager.get(providerSessionId);
       const runtimeState = yield* Ref.get(state);

@@ -1607,7 +1607,10 @@ export const layerWithOptions = (
               ),
             );
           }),
-          Effect.exit,
+          Effect.forkIn(entry.scope),
+          // Observe completion outside the session scope: release closes that
+          // scope and must not wait for the fiber performing release itself.
+          Effect.flatMap(Fiber.await),
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
               // A provider that exits on the shutdown signal is released by shutdown.
