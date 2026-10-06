@@ -1051,6 +1051,110 @@ it.effect(
     }),
 );
 
+it.effect.each(["release", "event-pump"] as const)(
+  "ProviderSessionManagerV2 fails a full paused subscriber without blocking %s cleanup",
+  (scenario) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread-full-subscription-failure:${scenario}`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const paused = yield* runtime.subscribeEvents!;
+        const observer = yield* runtime.subscribeEvents!;
+        const filled = yield* observer.events.pipe(
+          Stream.take(512),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterQueue);
+        const terminal: ProviderAdapterV2Event = {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: idAllocator.derive.providerThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: "failure-thread",
+          }),
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "failure-turn",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        };
+        yield* Queue.offerAll(
+          adapterQueue!,
+          Array.from({ length: 512 }, () => terminal),
+        );
+        // Publication reaches the observer only after filling the paused queue.
+        yield* Fiber.join(filled);
+        assert.isDefined(McpProviderSession.readMcpProviderSession(threadId));
+        if (scenario === "release") {
+          yield* manager.release({
+            providerSessionId,
+            reason: "runtime_error",
+            detail: "process exited",
+          });
+          assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        } else {
+          const released = yield* eventSink
+            .stream({
+              threadId,
+              afterSequence: yield* eventSink.latestSequence({ threadId }),
+              eventType: "provider-session.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "provider-session.updated" &&
+                  stored.event.payload.status === "error",
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+          yield* Queue.end(adapterQueue!);
+          assert.isTrue(Option.isSome(yield* Fiber.join(released)));
+        }
+        // Release must finish before this consumer resumes.
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal(
+          (yield* projections.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+          "error",
+        );
+        const drained = yield* Ref.make<ReadonlyArray<ProviderAdapterV2Event>>([]);
+        const exit = yield* paused.events.pipe(
+          Stream.runForEach((event) => Ref.update(drained, (events) => [...events, event])),
+          Effect.exit,
+        );
+        assert.lengthOf(yield* Ref.get(drained), 512);
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit))
+          assert.instanceOf(Cause.squash(exit.cause), ProviderAdapterEventStreamError);
+      });
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
