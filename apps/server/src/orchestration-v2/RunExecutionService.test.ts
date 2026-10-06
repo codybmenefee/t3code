@@ -35,9 +35,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -3914,13 +3912,6 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
-    readonly onClose?: Effect.Effect<void>;
-    readonly eventQueue?: Queue.Queue<ProviderAdapterV2Event, Cause.Done>;
-    readonly beforeFinalWrite?: (
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
-    ) => Effect.Effect<void, EventSink.EventSinkV2Error>;
-    readonly beforeIngest?: Effect.Effect<void, ProviderEventIngestor.ProviderEventIngestorV2Error>;
-    readonly afterStart?: Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3936,7 +3927,6 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
-                yield* options?.beforeFinalWrite?.(input.events) ?? Effect.void;
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -3946,17 +3936,12 @@ function runBackgroundItemScenario(
                 }
                 return [];
               }),
-            writeIfRunCurrent: (input) =>
-              Effect.gen(function* () {
-                yield* options?.beforeFinalWrite?.(input.events) ?? Effect.void;
-                return { committed: true, storedEvents: [] };
-              }),
+            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
             ingestNormalized: (input) =>
               Effect.gen(function* () {
-                yield* options?.beforeIngest ?? Effect.void;
                 const event = input.event;
                 if (event.type === "turn_item.updated") {
                   yield* Ref.update(observed, (current) => [
@@ -3988,27 +3973,13 @@ function runBackgroundItemScenario(
           events: Stream.empty,
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
-            const initialEvents = makeEvents(ids);
-            if (options?.eventQueue !== undefined) {
-              yield* Queue.offerAll(options.eventQueue, initialEvents);
-            }
-            const events =
-              options?.eventQueue === undefined
-                ? Stream.fromIterable(initialEvents)
-                : Stream.fromQueue(options.eventQueue);
+            const events = Stream.fromIterable(makeEvents(ids));
             return {
               events:
                 options?.keepEventStreamOpen === true
                   ? events.pipe(Stream.concat(Stream.never))
                   : events,
-              close: Effect.gen(function* () {
-                yield* options?.onClose ?? Effect.void;
-                if (options?.eventQueue !== undefined) {
-                  yield* Queue.clear(options.eventQueue);
-                  yield* Queue.end(options.eventQueue);
-                }
-                yield* Deferred.succeed(ingestionDone, undefined);
-              }),
+              close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
           startTurn: () => Effect.void,
@@ -4060,106 +4031,11 @@ function runBackgroundItemScenario(
       });
     }).pipe(Effect.provide(layerTest));
 
-    yield* options?.afterStart ?? Effect.void;
     const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
     assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
     return yield* Ref.get(observed);
   });
 }
-
-it.effect.each(["terminal", "ingestion", "completed-background"] as const)(
-  "persists the %s result after disk space becomes available",
-  (scenario) =>
-    Effect.gen(function* () {
-      const storageFull = yield* Ref.make(true);
-      const subscriptionClosed = yield* Ref.make(false);
-      const eventQueue = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
-      const key = `storage-full:${scenario}`;
-      const blocked = yield* Deferred.make<void>();
-      const persisted = yield* Deferred.make<ReadonlyArray<OrchestrationV2DomainEvent>>();
-      const attempts = yield* Ref.make(0);
-      const observed = yield* runBackgroundItemScenario(
-        key,
-        (ids) =>
-          scenario === "completed-background"
-            ? [
-                backgroundTurnItemEvent(ids, "command_execution", "running", 1),
-                rootTerminalEvent(ids, "completed"),
-              ]
-            : [rootTerminalEvent(ids, "interrupted")],
-        {
-          eventQueue,
-          onClose: Ref.set(subscriptionClosed, true),
-          ...(scenario === "ingestion"
-            ? {
-                beforeIngest: new ProviderEventIngestor.ProviderEventPublishError({
-                  providerSessionId: ProviderSessionId.make("session:full"),
-                  eventCount: 1,
-                  cause: { code: "ENOSPC" },
-                }),
-              }
-            : {}),
-          beforeFinalWrite: (events) =>
-            Effect.gen(function* () {
-              yield* Ref.update(attempts, (count) => count + 1);
-              if (yield* Ref.get(storageFull)) {
-                yield* Deferred.succeed(blocked, undefined);
-                return yield* new EventSink.EventSinkWriteError({
-                  eventCount: events.length,
-                  cause: new Error("database or disk is full"),
-                });
-              }
-              yield* Deferred.succeed(persisted, events);
-            }),
-          afterStart: Effect.gen(function* () {
-            yield* Deferred.await(blocked);
-            yield* TestClock.adjust("3 seconds");
-            assert.isAtLeast(yield* Ref.get(attempts), 2);
-            assert.equal(
-              yield* Ref.get(subscriptionClosed),
-              scenario !== "completed-background",
-              "only completed runs keep their background completion subscription",
-            );
-            if (scenario === "completed-background") {
-              assert.isTrue(
-                yield* Queue.offer(
-                  eventQueue,
-                  backgroundTurnItemEvent(
-                    backgroundScenarioIds(key),
-                    "command_execution",
-                    "completed",
-                    2,
-                  ),
-                ),
-                "background completion must remain queued while storage is full",
-              );
-            }
-            yield* Ref.set(storageFull, false);
-            yield* TestClock.adjust("1 second");
-            const events = yield* Deferred.await(persisted);
-            assert.equal(
-              events.find((event) => event.type === "run.updated")?.payload.status,
-              scenario === "terminal"
-                ? "interrupted"
-                : scenario === "completed-background"
-                  ? "waiting"
-                  : "failed",
-            );
-            if (scenario === "ingestion") {
-              const failure = events.find(
-                (event) => event.type === "turn-item.updated" && event.payload.type === "error",
-              );
-              assert.ok(failure?.type === "turn-item.updated" && failure.payload.type === "error");
-              assert.include(failure.payload.failure.message, "Free space on the server");
-            }
-          }),
-        },
-      );
-      if (scenario === "completed-background") {
-        assert.deepEqual(observed, ["turn_item:running", "root-finalized", "turn_item:completed"]);
-      }
-    }),
-);
 
 it.effect("releases ingestion after idle subagent rows and items settle", () =>
   Effect.gen(function* () {

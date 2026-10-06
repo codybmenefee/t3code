@@ -200,7 +200,9 @@ interface LiveSessionEntry {
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapterV2SessionRuntime;
-  readonly eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>;
+  readonly eventSubscribers: Ref.Ref<
+    ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+  >;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
@@ -211,10 +213,12 @@ interface LiveSessionEntry {
   readonly pinnedSinceMs: number | null;
 }
 
-type ProviderSessionEventQueue = Queue.Queue<
-  ProviderAdapterV2Event,
-  ProviderAdapterV2Error | Cause.Done
->;
+type ProviderSessionEventSignal =
+  | { readonly type: "event"; readonly event: ProviderAdapterV2Event }
+  | {
+      readonly type: "failure";
+      readonly cause: Cause.Cause<ProviderAdapterV2Error>;
+    };
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
@@ -516,26 +520,14 @@ export const layerWithOptions = (
             );
 
       const publishToSubscribers = (
-        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
-        event: ProviderAdapterV2Event,
+        subscribers: Ref.Ref<
+          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+        >,
+        signal: ProviderSessionEventSignal,
       ) =>
         Ref.get(subscribers).pipe(
           Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, event), {
-              discard: true,
-            }),
-          ),
-        );
-
-      // Queue failure is out of band: it cannot wait for buffer capacity and
-      // buffered completions drain before the consumer sees the failure.
-      const failEventSubscribers = (
-        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
-        cause: Cause.Cause<ProviderAdapterV2Error>,
-      ) =>
-        Ref.getAndSet(subscribers, new Map()).pipe(
-          Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.failCause(queue, cause), {
+            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
               discard: true,
             }),
           ),
@@ -548,7 +540,16 @@ export const layerWithOptions = (
             providerSessionId: entry.runtime.providerSessionId,
             cause: detail,
           });
-          yield* failEventSubscribers(entry.eventSubscribers, Cause.fail(error));
+          const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
+          yield* Effect.forEach(
+            subscribers.values(),
+            (queue) =>
+              Queue.offer(queue, {
+                type: "failure",
+                cause: Cause.fail(error),
+              }),
+            { discard: true },
+          );
         });
 
       const closeSubscribers = (entry: LiveSessionEntry) =>
@@ -556,7 +557,7 @@ export const layerWithOptions = (
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
           yield* Effect.forEach(
             subscribers.values(),
-            (queue) => Queue.end(queue).pipe(Effect.andThen(Queue.shutdown(queue))),
+            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue))),
             { discard: true },
           );
         });
@@ -1356,39 +1357,48 @@ export const layerWithOptions = (
         );
 
       const makeEventSubscription = (
-        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
+        subscribers: Ref.Ref<
+          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+        >,
       ): Effect.Effect<ProviderAdapterV2EventSubscription> =>
         Effect.gen(function* () {
-          // A paused persistence consumer must keep completion events without
-          // growing its queue indefinitely. Suspend publication at capacity.
-          const queue = yield* Queue.bounded<
-            ProviderAdapterV2Event,
-            ProviderAdapterV2Error | Cause.Done
-          >(512);
+          const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
           const subscriberId = yield* Ref.getAndUpdate(nextSubscriberId, (value) => value + 1);
           yield* Ref.update(subscribers, (current) => {
             const updated = new Map(current);
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.update(subscribers, (current) => {
+          const close = Ref.modify(subscribers, (current) => {
+            if (!current.has(subscriberId)) {
+              return [false, current] as const;
+            }
             const updated = new Map(current);
             updated.delete(subscriberId);
-            return updated;
+            return [true, updated] as const;
           }).pipe(
-            // Failure already removes subscribers from the map. Explicit
-            // close still discards their buffer and releases pending offers.
-            Effect.andThen(Queue.end(queue)),
-            Effect.andThen(Queue.shutdown(queue)),
-            Effect.asVoid,
+            Effect.flatMap((removed) =>
+              removed
+                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
+                : Effect.void,
+            ),
           );
-          const events = Stream.fromQueue(queue).pipe(Stream.ensuring(close));
+          const events = Stream.fromQueue(queue).pipe(
+            Stream.mapEffect((signal) =>
+              signal.type === "event"
+                ? Effect.succeed(signal.event)
+                : Effect.failCause(signal.cause),
+            ),
+            Stream.ensuring(close),
+          );
           return { events, close } satisfies ProviderAdapterV2EventSubscription;
         });
 
       const decorateRuntime = (
         runtime: ProviderAdapterV2SessionRuntime,
-        eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventQueue>>,
+        eventSubscribers: Ref.Ref<
+          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+        >,
       ): ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
@@ -1602,15 +1612,12 @@ export const layerWithOptions = (
                     }).pipe(entry.requestEventPermit.withPermits(1));
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, event);
+                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                 }),
               ),
             );
           }),
-          Effect.forkIn(entry.scope),
-          // Observe completion outside the session scope: release closes that
-          // scope and must not wait for the fiber performing release itself.
-          Effect.flatMap(Fiber.await),
+          Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
               // A provider that exits on the shutdown signal is released by shutdown.
@@ -1638,7 +1645,11 @@ export const layerWithOptions = (
                       cause: "Provider event stream ended unexpectedly.",
                     }),
                   );
-              yield* failEventSubscribers(entry.eventSubscribers, cause);
+              yield* publishToSubscribers(entry.eventSubscribers, {
+                type: "failure",
+                cause,
+              });
+              yield* Ref.set(entry.eventSubscribers, new Map());
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
@@ -1785,7 +1796,7 @@ export const layerWithOptions = (
                   ),
                 );
               const eventSubscribers = yield* Ref.make<
-                ReadonlyMap<number, ProviderSessionEventQueue>
+                ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const now = yield* Clock.currentTimeMillis;

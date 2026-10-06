@@ -17,7 +17,16 @@ import * as NodeTimersPromises from "node:timers/promises";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
-const waitForTerminalPoll = Effect.promise(() => NodeTimersPromises.setTimeout(10));
+const yieldToRuntime = Effect.yieldNow.pipe(
+  Effect.andThen(
+    Effect.promise(
+      () =>
+        new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        }),
+    ),
+  ),
+);
 
 export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnControlError>()(
   "ProviderTurnControlError",
@@ -160,35 +169,6 @@ export const layer: Layer.Layer<
         return { context, providerThread: interruptProviderThread, providerTurn, session };
       });
 
-    const awaitTerminal = (input: {
-      readonly threadId: ThreadId;
-      readonly providerThreadId: ProviderThreadId;
-      readonly providerTurnId: ProviderTurnId;
-      readonly attemptId: RunAttemptId;
-    }) =>
-      Effect.gen(function* () {
-        const deadline = performance.now() + 2_000;
-        while (performance.now() < deadline) {
-          const { providerTurn, attempt } = yield* projections.getProviderControlContext(
-            input.threadId,
-            input,
-          );
-          if (
-            providerTurn !== undefined &&
-            providerTurn.status !== "running" &&
-            attempt !== undefined &&
-            attempt.status !== "running"
-          ) {
-            return true;
-          }
-          // Terminal events run on a detached ingestion fiber. Let it finish
-          // before Stop synthesizes settlement or Restart replaces the turn.
-          // Yield through Node so deterministic clocks cannot pin ingestion.
-          yield* waitForTerminalPoll;
-        }
-        return false;
-      });
-
     return ProviderTurnControlServiceV2.of({
       interrupt: (input) =>
         Effect.gen(function* () {
@@ -206,16 +186,18 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
-          if (
-            loaded.providerTurn.status === "running" &&
-            loaded.providerTurn.runAttemptId !== null
-          ) {
-            // A dead native turn may acknowledge Stop without emitting a
-            // terminal. Bound the wait so the orchestrator can recover it.
-            yield* awaitTerminal({
-              ...input,
-              attemptId: loaded.providerTurn.runAttemptId,
-            });
+          // Give native terminal ingestion time to finish before the Stop
+          // follow-up repairs a run whose provider no longer reports on it.
+          const deadline = performance.now() + 2_000;
+          while (loaded.providerTurn.status === "running" && performance.now() < deadline) {
+            const current = yield* projections.getProviderControlContext(input.threadId, input);
+            if (
+              current.providerTurn?.status !== "running" &&
+              current.attempt?.status !== "running"
+            ) {
+              break;
+            }
+            yield* Effect.promise(() => NodeTimersPromises.setTimeout(10));
           }
         }).pipe(
           Effect.mapError((cause) =>
@@ -254,13 +236,29 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
           });
 
-          if (
-            yield* awaitTerminal({
-              ...input,
-              attemptId: input.interruptedAttemptId,
-            })
-          )
-            return;
+          for (let remaining = 1_000; remaining > 0; remaining -= 1) {
+            const { providerTurn, attempt } = yield* projections.getProviderControlContext(
+              input.threadId,
+              {
+                providerThreadId: input.providerThreadId,
+                providerTurnId: input.providerTurnId,
+                attemptId: input.interruptedAttemptId,
+              },
+            );
+            if (
+              providerTurn !== undefined &&
+              providerTurn.status !== "running" &&
+              attempt !== undefined &&
+              attempt.status !== "running"
+            ) {
+              return;
+            }
+            // Provider terminal events are projected on a detached ingestion
+            // fiber. Yield through the Node event loop instead of sleeping on
+            // Effect's clock so deterministic runtimes cannot deadlock a
+            // command that is waiting for that projection.
+            yield* yieldToRuntime;
+          }
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
             operation: "restart",

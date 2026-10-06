@@ -33,7 +33,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -52,7 +51,6 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
-import { isStorageFullError } from "./StorageFailure.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -568,7 +566,6 @@ export const layer: Layer.Layer<
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
-      readonly onStorageFull?: Effect.Effect<void>;
       readonly writeIfRunCurrent?: {
         readonly activeAttemptId: RunAttemptId;
         readonly expectedStatus: OrchestrationV2Run["status"];
@@ -795,16 +792,7 @@ export const layer: Layer.Layer<
           yield* eventSink.writeWithEffects(finalization);
         }
         yield* input.refreshAfterTurn;
-      }).pipe(
-        // Failed and interrupted runs can release their subscription before
-        // retrying. Completed runs must retain late background completions.
-        Effect.tapError((error) =>
-          isStorageFullError(error) ? (input.onStorageFull ?? Effect.void) : Effect.void,
-        ),
-        // Keep the terminal write retryable after disk exhaustion instead of
-        // losing the result. Provider work is never restarted by this retry.
-        Effect.retry({ while: isStorageFullError, schedule: Schedule.spaced("1 second") }),
-      );
+      });
 
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
@@ -1002,8 +990,6 @@ export const layer: Layer.Layer<
                 terminal,
                 failureItemPersisted: terminal.status === "failed",
                 refreshAfterTurn,
-                onStorageFull:
-                  terminal.status === "completed" ? Effect.void : eventSubscription.close,
               }).pipe(
                 Effect.mapError(
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
@@ -1298,9 +1284,6 @@ export const layer: Layer.Layer<
                     cause,
                   }).pipe(
                     Effect.andThen(
-                      isStorageFullError(cause) ? eventSubscription.close : Effect.void,
-                    ),
-                    Effect.andThen(
                       finalized
                         ? Effect.void
                         : Ref.get(latestProviderThread).pipe(
@@ -1331,7 +1314,6 @@ export const layer: Layer.Layer<
                                         ),
                                         failureItemPersisted: false,
                                         refreshAfterTurn,
-                                        onStorageFull: eventSubscription.close,
                                       }),
                                     ),
                                   ),
@@ -1464,7 +1446,7 @@ export const layer: Layer.Layer<
   }),
 );
 
-function makeInterruptResultTurnItem(input: {
+export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;

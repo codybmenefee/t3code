@@ -102,6 +102,7 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
+import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -8215,68 +8216,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...message, streaming: false, updatedAt: input.now },
         });
       }
-      for (const item of input.projection.turnItems) {
-        if (
-          item.runId !== run.id ||
-          (item.type !== "assistant_message" && item.type !== "reasoning") ||
-          !["pending", "running", "waiting"].includes(item.status)
-        )
-          continue;
-        yield* emitEvent({
-          ...base,
-          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-          type: "turn-item.updated",
-          payload: {
-            ...item,
-            status: "interrupted",
-            streaming: false,
-            completedAt: input.now,
-            updatedAt: input.now,
-          },
-        });
-      }
       const delegatedNodeIds = new Set(
         input.projection.subagents
           .filter((subagent) => subagent.origin === "app_owned")
           .map((subagent) => subagent.id),
       );
-      for (const node of input.projection.nodes) {
-        if (
-          node.runId !== run.id ||
-          delegatedNodeIds.has(node.id) ||
-          !["pending", "running", "waiting"].includes(node.status)
-        )
-          continue;
-        yield* emitEvent({
-          ...base,
-          nodeId: node.id,
-          type: "node.updated",
-          payload: {
-            ...node,
-            status: "interrupted",
-            completedAt: input.now,
-          },
-        });
-      }
-      for (const subagent of input.projection.subagents) {
-        if (
-          subagent.runId !== run.id ||
-          subagent.origin === "app_owned" ||
-          !["pending", "running", "waiting"].includes(subagent.status)
-        )
-          continue;
-        yield* emitEvent({
-          ...base,
-          nodeId: subagent.id,
-          type: "subagent.updated",
-          payload: {
-            ...subagent,
-            status: "interrupted",
-            completedAt: input.now,
-            updatedAt: input.now,
-          },
-        });
-      }
+      const cascaded = yield* RunExecutionService.cascadeTerminalizeRunOwnedSubagents({
+        run,
+        status: "interrupted",
+        completedAt: input.now,
+        allocateEventId: () =>
+          idAllocator.allocate.event({
+            threadId: input.command.threadId,
+            commandId: input.command.commandId,
+          }),
+        open: {
+          subagents: new Map(
+            input.projection.subagents
+              .filter((task) => task.runId === run.id && task.origin !== "app_owned")
+              .map((task) => [task.id, task]),
+          ),
+          nodes: new Map(
+            input.projection.nodes
+              .filter((node) => node.runId === run.id && !delegatedNodeIds.has(node.id))
+              .map((node) => [node.id, node]),
+          ),
+          turnItems: new Map(),
+          childTurnItems: new Map(
+            input.projection.turnItems
+              .filter(
+                (item) =>
+                  item.runId === run.id &&
+                  (item.type === "assistant_message" || item.type === "reasoning"),
+              )
+              .map((item) => [item.id, item]),
+          ),
+          linkedChildThreadIds: new Set([run.threadId]),
+        },
+      }).pipe(mapDispatchError(input.command));
+      yield* Ref.update(input.events, (events) => [...events, ...cascaded]);
       for (const request of input.projection.runtimeRequests) {
         if (
           request.status !== "pending" ||
@@ -8297,31 +8275,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
-      yield* emitEvent({
-        ...base,
-        type: "turn-item.updated",
-        payload: {
-          id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
-          threadId: input.command.threadId,
-          runId: run.id,
-          nodeId: rootNode.id,
-          providerThreadId: input.providerTurn.providerThreadId,
-          providerTurnId: input.providerTurn.id,
-          nativeItemRef: null,
-          parentItemId: idAllocator.derive.runSignalTurnItem({
-            runId: run.id,
-            signal: "interrupt-request",
+      if (providerThread !== undefined) {
+        yield* emitEvent({
+          ...base,
+          type: "turn-item.updated",
+          payload: RunExecutionService.makeInterruptResultTurnItem({
+            idAllocator,
+            run,
+            rootNode,
+            providerThread,
+            completedAt: input.now,
           }),
-          ordinal: run.ordinal * 100 + 98,
-          status: "interrupted",
-          title: "Interrupted",
-          startedAt: input.now,
-          completedAt: input.now,
-          updatedAt: input.now,
-          type: "run_interrupt_result",
-          message: "Run interrupted by user",
-        },
-      });
+        });
+      }
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       yield* emitEvent({
         ...base,
@@ -8561,11 +8527,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             messageRunIds: [stoppedRun.id],
             messageRoles: ["assistant"],
           })
-          .pipe(
-            Effect.mapError(
-              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-            ),
-          );
+          .pipe(mapDispatchError(command));
         yield* settleInterruptedRun({
           command,
           projection: { ...projection, messages: output.messages },
@@ -8577,7 +8539,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // A new turn may have started since Stop; its work is not this Stop's.
       if (
-        stoppedRun === undefined ||
         projection.runs.some(
           (run) =>
             run.id !== stoppedRun.id &&
@@ -8917,9 +8878,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-      const settleOnly = Option.isNone(sessionOption);
-
-      if (settleOnly) {
+      if (Option.isNone(sessionOption)) {
         yield* emitEvent({
           type: "turn-item.updated",
           threadId: command.threadId,
@@ -8950,13 +8909,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const providerSessionId = providerThread.providerSessionId;
-      if (Option.isNone(sessionOption)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Provider session ${providerThread.providerSessionId} is not active.`,
-        });
-      }
       yield* enforceCommandPolicy(command)(
         commandPolicy.ensureInterrupt({
           commandId: command.commandId,
