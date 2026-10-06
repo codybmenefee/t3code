@@ -849,6 +849,36 @@ describe("CursorAdapterV2", () => {
     }
   });
 
+  it("removes Cursor's own web tools while a T3 web provider is selected", () => {
+    const threadId = ThreadId.make("thread-cursor-web-provider");
+    const options = () =>
+      makeCursorAgentOptions({
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+        },
+        threadId,
+      });
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-cursor-web-provider"),
+      threadId,
+      providerSessionId: "mcp-session-cursor-web",
+      providerInstanceId: ProviderInstanceId.make("cursor"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-cursor-mcp-token",
+      browserToolsAvailable: true,
+      nativeWebToolsDisabled: true,
+    });
+    try {
+      assert.deepEqual(options().disallowedTools, ["webSearch", "webFetch"]);
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+    assert.isUndefined(options().disallowedTools);
+  });
+
   it("injects thread-scoped MCP credentials without logging them", () => {
     const threadId = ThreadId.make("thread-cursor-mcp");
     McpProviderSession.setMcpProviderSession({

@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  type WebToolProvider,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -513,6 +514,7 @@ function runBrowserAccessScenario(input: {
   readonly deviceOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
+  readonly webProvider?: WebToolProvider;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -555,6 +557,7 @@ function runBrowserAccessScenario(input: {
           mcpConfigs,
           projectServiceLayer: layerProjectService,
           serverSettingsLayer: ServerSettings.layerTest({
+            ...(input.webProvider === undefined ? {} : { web: { provider: input.webProvider } }),
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
             projectSettingsOverrides: {
               [projectId]: {
@@ -1279,6 +1282,24 @@ it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", ()
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 turns off native web tools unless the web provider is Built-in",
+  () =>
+    Effect.gen(function* () {
+      const byDefault = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+      });
+      assert.equal(byDefault?.nativeWebToolsDisabled, true);
+      const builtin = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+        webProvider: "builtin",
+      });
+      assert.equal(builtin?.nativeWebToolsDisabled, false);
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-in", () =>

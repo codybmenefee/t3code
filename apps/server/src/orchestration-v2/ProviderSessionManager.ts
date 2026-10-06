@@ -368,6 +368,19 @@ export const layerWithOptions = (
           );
         },
       );
+      // Built-in keeps each CLI's own web tools; any other provider replaces them.
+      const nativeWebToolsDisabled = Option.match(serverSettings, {
+        onNone: () => Effect.succeed(true),
+        onSome: (service) =>
+          service.getSettings.pipe(
+            Effect.map((settings) => settings.web.provider !== "builtin"),
+            Effect.catch(() =>
+              Effect.logWarning(
+                "Could not read the web provider; leaving the CLI's web tools on.",
+              ).pipe(Effect.as(false)),
+            ),
+          ),
+      });
       const layerScope = yield* Effect.scope;
       // Ctrl+C, or a stop that signals the whole process group, reaches the
       // provider CLIs with the server. They report their own background work
@@ -466,6 +479,7 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                const webToolsDisabled = yield* nativeWebToolsDisabled;
                 const existing = McpProviderSession.readMcpProviderSession(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -482,6 +496,11 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    // Not part of the credential, so a changed web provider updates in place.
+                    McpProviderSession.setMcpProviderSession({
+                      ...existing,
+                      nativeWebToolsDisabled: webToolsDisabled,
+                    });
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -493,7 +512,10 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                 });
-                McpProviderSession.setMcpProviderSession(credential.config);
+                McpProviderSession.setMcpProviderSession({
+                  ...credential.config,
+                  nativeWebToolsDisabled: webToolsDisabled,
+                });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

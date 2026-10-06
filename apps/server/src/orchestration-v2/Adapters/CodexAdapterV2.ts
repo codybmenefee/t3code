@@ -1301,6 +1301,8 @@ export function codexThreadRuntimeParams(input: {
               },
             },
           }),
+      // Codex has one web tool; opening and reading pages are actions of the same search.
+      ...(mcpSession?.nativeWebToolsDisabled === true ? { web_search: "disabled" } : {}),
     },
   };
 }

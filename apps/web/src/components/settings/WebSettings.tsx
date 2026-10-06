@@ -4,6 +4,11 @@ import {
   type EnvironmentId,
   type WebSettings,
 } from "@t3tools/contracts";
+import {
+  WEB_PROVIDER_DESCRIPTION,
+  WEB_TOOL_API_KEYS,
+  WEB_TOOL_PROVIDER_LABELS,
+} from "@t3tools/client-runtime/web-tool-providers";
 import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -23,41 +28,6 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 import { useUpdateScopedSettings } from "./useScopedSettings";
 
-type ApiProvider = Exclude<WebToolProvider, "builtin">;
-
-const PROVIDER_LABELS: Record<WebToolProvider, string> = {
-  firecrawl: "Firecrawl",
-  exa: "Exa",
-  tavily: "Tavily",
-  builtin: "Built-in",
-};
-
-const API_KEYS: Record<
-  ApiProvider,
-  {
-    readonly field: "firecrawlApiKey" | "exaApiKey" | "tavilyApiKey";
-    readonly description: string;
-    readonly link: string;
-  }
-> = {
-  firecrawl: {
-    field: "firecrawlApiKey",
-    description:
-      "Optional. Without a key, Firecrawl's keyless tier is used on eligible networks; a key raises the rate limits.",
-    link: "https://www.firecrawl.dev/app/api-keys",
-  },
-  exa: {
-    field: "exaApiKey",
-    description: "Required for Exa.",
-    link: "https://dashboard.exa.ai/api-keys",
-  },
-  tavily: {
-    field: "tavilyApiKey",
-    description: "Required for Tavily.",
-    link: "https://app.tavily.com/home",
-  },
-};
-
 function WebProviderRow() {
   const { targets } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
@@ -69,7 +39,7 @@ function WebProviderRow() {
       serverScoped
       settingKeys={["web"]}
       {...searchableSetting("web-provider")}
-      description="The service behind the web_search and web_fetch tools T3 Code gives every agent. Built-in leaves each CLI on its own web tools."
+      description={WEB_PROVIDER_DESCRIPTION}
       resetAction={
         provider !== DEFAULT_WEB_TOOL_PROVIDER ? (
           <SettingResetButton
@@ -90,7 +60,7 @@ function WebProviderRow() {
           <SelectTrigger size="sm" aria-label="Web provider">
             <SelectValue>
               {(value: WebToolProvider | null) =>
-                value === null ? "Mixed" : PROVIDER_LABELS[value]
+                value === null ? "Mixed" : WEB_TOOL_PROVIDER_LABELS[value]
               }
             </SelectValue>
           </SelectTrigger>
@@ -98,8 +68,8 @@ function WebProviderRow() {
             {WebToolProvider.literals.map((value) => (
               <SelectItem key={value} value={value}>
                 {value === DEFAULT_WEB_TOOL_PROVIDER
-                  ? `${PROVIDER_LABELS[value]} (default)`
-                  : PROVIDER_LABELS[value]}
+                  ? `${WEB_TOOL_PROVIDER_LABELS[value]} (default)`
+                  : WEB_TOOL_PROVIDER_LABELS[value]}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -121,9 +91,9 @@ function WebApiKeyRow({ environmentId }: { readonly environmentId: EnvironmentId
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   if (saved.provider === "builtin") return null;
-  const info = API_KEYS[saved.provider];
+  const info = WEB_TOOL_API_KEYS[saved.provider];
   const isSaved = saved[info.field].length > 0;
-  const label = PROVIDER_LABELS[saved.provider];
+  const label = WEB_TOOL_PROVIDER_LABELS[saved.provider];
 
   const save = async (key: string) => {
     setSaving(true);

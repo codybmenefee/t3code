@@ -19,6 +19,10 @@
       "types": "./src/device/hubAccess.ts",
       "default": "./src/device/hubAccess.ts"
     },
+    "./web-tool-providers": {
+      "types": "./src/webToolProviders.ts",
+      "default": "./src/webToolProviders.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"

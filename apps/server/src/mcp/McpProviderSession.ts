@@ -22,6 +22,12 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * Set while a web provider other than Built-in is selected in Settings →
+   * Web. Adapters then turn off the CLI's own web search and fetch so the
+   * agent uses T3's `web_search` and `web_fetch` instead.
+   */
+  readonly nativeWebToolsDisabled?: boolean;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

@@ -609,6 +609,29 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 process spawning", () => {
+  it("turns off Codex web search while a T3 web provider is selected", () => {
+    const threadId = ThreadId.make("thread-codex-web-provider");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-codex-web-provider"),
+      threadId,
+      providerSessionId: "mcp-session-codex-web",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-codex-token",
+      browserToolsAvailable: true,
+      nativeWebToolsDisabled: true,
+    });
+    try {
+      assert.equal(
+        CodexAdapterV2.codexThreadRuntimeParams({ threadId }).config.web_search,
+        "disabled",
+      );
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+    assert.isUndefined(CodexAdapterV2.codexThreadRuntimeParams({ threadId }).config.web_search);
+  });
+
   it("injects cwd, model, and MCP authorization into thread-scoped params", () => {
     const threadId = ThreadId.make("thread-codex-mcp");
     McpProviderSession.setMcpProviderSession({

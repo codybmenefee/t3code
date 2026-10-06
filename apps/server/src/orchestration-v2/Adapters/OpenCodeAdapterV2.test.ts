@@ -2516,6 +2516,17 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(openCodeToolProjectionKind("custom_tool"), "dynamic_tool");
   });
 
+  it("denies OpenCode's own web tools while a T3 web provider is selected, even with full access", () => {
+    const fullAccess = openCodePermissionRules(runtimePolicy("full-access"), true);
+    assert.equal(permissionAction(fullAccess, "websearch"), "deny");
+    assert.equal(permissionAction(fullAccess, "webfetch"), "deny");
+    assert.equal(permissionAction(fullAccess, "bash"), "allow");
+    assert.equal(
+      permissionAction(openCodePermissionRules(runtimePolicy("full-access")), "websearch"),
+      "allow",
+    );
+  });
+
   it("maps runtime modes to safe OpenCode permission rules", () => {
     const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));
     assert.equal(permissionAction(approvalRequired, "read"), "allow");

@@ -53,6 +53,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -470,6 +471,7 @@ const sessionRules = (
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   threadId: string | null,
+  nativeWebToolsDisabled = false,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -482,6 +484,8 @@ const sessionRules = (
   // Plan mode writes only its plan, which `paths` allows again. Shell and read
   // are never denied: the free tier refuses sessions whose rules deny them.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
+  // OpenCode's own web tools give way to t3-code's while a web provider is selected.
+  ...(nativeWebToolsDisabled ? [rule("websearch", "deny"), rule("webfetch", "deny")] : []),
   ...paths,
   ...mcpRules(threadId),
 ];
@@ -2964,11 +2968,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+      const mcpSession =
+        appThreadId === null || connection.external
+          ? undefined
+          : McpProviderSession.readMcpProviderSession(ThreadId.make(appThreadId));
       return sessionRules(
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId,
+        mcpSession?.nativeWebToolsDisabled === true,
       );
     });
 
