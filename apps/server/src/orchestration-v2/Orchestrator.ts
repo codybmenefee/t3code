@@ -8167,8 +8167,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNode === undefined ||
         run.activeAttemptId !== attempt.id ||
         run.status !== "running" ||
-        attempt.status !== "running" ||
-        input.providerTurn.status !== "running"
+        attempt.status !== "running"
       )
         return;
       const emitEvent = emit(input.events, input.command);
@@ -8179,15 +8178,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: run.providerInstanceId,
         occurredAt: input.now,
       };
-      yield* emitEvent({
-        ...base,
-        type: "provider-turn.updated",
-        payload: {
-          ...input.providerTurn,
-          status: "interrupted",
-          completedAt: input.now,
-        },
-      });
+      if (input.providerTurn.status === "running") {
+        yield* emitEvent({
+          ...base,
+          type: "provider-turn.updated",
+          payload: {
+            ...input.providerTurn,
+            status: "interrupted",
+            completedAt: input.now,
+          },
+        });
+      }
       yield* emitEvent({
         ...base,
         type: "run-attempt.updated",
@@ -8521,7 +8522,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const now = yield* DateTime.now;
-      if (stopped.providerTurn?.status === "running" && stoppedRun.status === "running") {
+      if (stopped.providerTurn !== undefined && stoppedRun.status === "running") {
         const output = yield* projectionStore
           .getThreadRecords(command.threadId, ["messages"], {
             messageRunIds: [stoppedRun.id],
@@ -8613,7 +8614,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.providerTurns.findLast(
           (candidate) =>
             candidate.runAttemptId === run?.activeAttemptId &&
-            (candidate.status === "running" || hasBackgroundWork),
+            (run?.status === "running" || candidate.status === "running" || hasBackgroundWork),
         ) ??
         (hasBackgroundWork
           ? projection.providerTurns.findLast(

@@ -51,7 +51,12 @@ const stopEarlierBackgroundWork = ({
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
-  readonly stalledRun?: "missing-session" | "returned-interrupt" | "superseded-attempt";
+  readonly stalledRun?:
+    | "missing-session"
+    | "missing-session-terminal"
+    | "returned-interrupt"
+    | "returned-interrupt-terminal"
+    | "superseded-attempt";
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -218,7 +223,7 @@ const stopEarlierBackgroundWork = ({
           const run = before.runs[0]!;
           const node = before.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
           const attempt = before.attempts[0]!;
-          if (stalledRun === "missing-session") {
+          if (stalledRun === "missing-session" || stalledRun === "missing-session-terminal") {
             const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
             const failed = yield* watch(
               (event) => event.type === "run.updated" && event.payload.status === "failed",
@@ -258,6 +263,31 @@ const stopEarlierBackgroundWork = ({
           const messageId = MessageId.make("partial-output");
           const item = before.turnItems.find((candidate) => candidate.id === devServerId)!;
           assert.ok(item.type === "command_execution");
+          const terminalProviderTurn = stalledRun.endsWith("-terminal");
+          if (terminalProviderTurn) {
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("terminal-provider-turn"),
+                  type: "provider-turn.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: { ...codexTurn, status: "completed", completedAt: now },
+                },
+                ...(stalledRun === "missing-session-terminal"
+                  ? [
+                      {
+                        id: EventId.make("completed-dev-server"),
+                        type: "turn-item.updated" as const,
+                        threadId,
+                        occurredAt: now,
+                        payload: { ...item, status: "completed" as const, completedAt: now },
+                      },
+                    ]
+                  : []),
+              ],
+            });
+          }
           yield* sink.write({
             events: [
               {
@@ -333,7 +363,10 @@ const stopEarlierBackgroundWork = ({
           const interrupted = stalledRun !== "superseded-attempt";
           assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");
           assert.equal(after.attempts[0]?.status, interrupted ? "interrupted" : "running");
-          assert.equal(after.providerTurns[0]?.status, interrupted ? "interrupted" : "running");
+          assert.equal(
+            after.providerTurns[0]?.status,
+            terminalProviderTurn ? "completed" : interrupted ? "interrupted" : "running",
+          );
           assert.equal(
             after.nodes.find((candidate) => candidate.id === node.id)?.status,
             interrupted ? "interrupted" : "running",
@@ -343,7 +376,11 @@ const stopEarlierBackgroundWork = ({
           assert.equal(output.text, "Partial output");
           assert.equal(
             after.turnItems.find((candidate) => candidate.id === devServerId)?.status,
-            interrupted ? "interrupted" : "running",
+            stalledRun === "missing-session-terminal"
+              ? "completed"
+              : interrupted
+                ? "interrupted"
+                : "running",
           );
           assert.equal(
             after.turnItems.find((candidate) => candidate.type === "assistant_message")?.status,
@@ -746,7 +783,13 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
   (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType, olderStart: true }),
 );
 
-it.effect.each(["missing-session", "returned-interrupt", "superseded-attempt"] as const)(
+it.effect.each([
+  "missing-session",
+  "missing-session-terminal",
+  "returned-interrupt",
+  "returned-interrupt-terminal",
+  "superseded-attempt",
+] as const)(
   "Stop recovers a stalled run after %s without changing a newer attempt",
   (stalledRun) => stopEarlierBackgroundWork({ stalledRun }),
 );
