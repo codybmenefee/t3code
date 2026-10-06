@@ -329,6 +329,36 @@ function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
 const searchQueryOfCall = searchOfCall;
 
 /**
+ * Answers every request with the body of the first route whose needle its GraphQL document or
+ * REST path contains, and anything unrouted with an empty object, which a mutation never reads.
+ */
+function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
+  mockedExecute.mockImplementation((call) => {
+    const target = call.kind === "graphql" ? call.query : call.path;
+    const match = routes.find(([needle]) => target.includes(needle));
+    return Effect.succeed(output(match === undefined ? "{}" : encodeJson(match[1])));
+  });
+}
+
+/** The variables of every GraphQL request whose document contains `needle`, in order. */
+function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unknown>>> {
+  return mockedExecute.mock.calls.flatMap(([call]) =>
+    call.kind === "graphql" && call.query.includes(needle) ? [call.variables ?? {}] : [],
+  );
+}
+
+/** Every REST request whose path contains `needle`, in order. */
+function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
+  return mockedExecute.mock.calls.flatMap(([call]) =>
+    call.kind === "rest" && call.path.includes(needle) ? [call] : [],
+  );
+}
+
+/** The pull request node id lookup, which the layer caches for every test after the first. */
+const NODE_ID_QUERY = "pullRequest(number: $number) { id }";
+const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
+
+/**
  * TODO(gh-api): the merge-message cases below still answer in gh shapes and are not run until
  * they are ported to the GitHubApi mock. An empty table registers no case.
  */
@@ -1993,10 +2023,32 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("updates a stale branch with a merge commit unless asked to rebase", () =>
+  /** The state a merge or branch update reads first: behind its base and blocked on checks. */
+  const actionState = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          id: "PR_7",
+          headRefOid: "abc123",
+          isMergeQueueEnabled: false,
+          mergeStateStatus: "BLOCKED",
+          baseRef: { compare: { behindBy: 2 } },
+          ...pullRequest,
+        },
+      },
+    },
+  });
+  const mergeMessage = (body: string, isMergeQueueEnabled = false) => ({
+    data: {
+      repository: {
+        pullRequest: { isMergeQueueEnabled, headRefOid: "abc123", viewerMergeBodyText: body },
+      },
+    },
+  });
+
+  it.effect("updates a stale branch with a merge commit unless asked to rebase", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route(["query PullRequestActionState", actionState()]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2006,9 +2058,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
         action: "update-branch",
       });
-      // GitHub's own default, and `gh`'s: a merge commit unless the rebase flag says otherwise.
-      expect(callAt(0).args).toEqual(["pr", "update-branch", "7", "--repo", "github.com/acme/web"]);
-
       yield* cli.runPullRequestAction({
         cwd: "/w",
         repository: "acme/web",
@@ -2017,21 +2066,18 @@ layer("GitHubPullRequestCli.layer", (it) => {
         action: "update-branch",
         updateMethod: "rebase",
       });
-      expect(callAt(1).args).toEqual([
-        "pr",
-        "update-branch",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--rebase",
+
+      // GitHub's own default: a merge commit unless asked to rebase, pinned to the head it read.
+      expect(variablesOf("updatePullRequestBranch(")).toEqual([
+        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
+        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "REBASE" },
       ]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("merges with the strategy it was asked for", () =>
+  it.effect("merges with the strategy it was asked for", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route(["query PullRequestActionState", actionState()]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2043,42 +2089,26 @@ layer("GitHubPullRequestCli.layer", (it) => {
         mergeMethod: "squash",
       });
 
-      expect(callAt(0).args).toEqual([
-        "pr",
-        "merge",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--squash",
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
       ]);
+      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.each(GH_SHAPED_CASES(["merge", "enable-auto-merge"] as const))(
+  it.effect.each(["merge", "enable-auto-merge"] as const)(
     "removes agent credits from the proposed message for %s",
     (action) =>
       Effect.gen(function* () {
-        mockedExecute
-          .mockReturnValueOnce(
-            Effect.succeed(
-              output(
-                encodeJson({
-                  data: {
-                    repository: {
-                      pullRequest: {
-                        isMergeQueueEnabled: false,
-                        headRefOid: "abc123",
-                        viewerMergeBodyText:
-                          "Details\n\nCo-authored-by: Alice <alice@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>",
-                      },
-                    },
-                  },
-                }),
-              ),
+        route(
+          [
+            "query PullRequestMergeMessage",
+            mergeMessage(
+              "Details\n\nCo-authored-by: Alice <alice@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>",
             ),
-          )
-          .mockReturnValueOnce(Effect.succeed(output("")));
+          ],
+          ["query PullRequestActionState", actionState()],
+        );
         const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
         yield* cli.runPullRequestAction({
           cwd: "/w",
@@ -2089,50 +2119,40 @@ layer("GitHubPullRequestCli.layer", (it) => {
           mergeMethod: "squash",
           removeAgentCreditsOnMerge: true,
         });
-        expect(callAt(0).args).toContain("method=SQUASH");
-        expect(callAt(1).args.slice(-2)).toEqual(["--body-file", "-"]);
-        expect(callAt(1).args).toContain("--match-head-commit");
-        expect(callAt(1).args).toContain("abc123");
-        expect(callAt(1).stdin).toBe("Details\n\nCo-authored-by: Alice <alice@example.com>");
-        expect(callAt(1).args.join(" ")).not.toContain("alice@example.com");
+        expect(variablesOf("query PullRequestMergeMessage")[0]?.["method"]).toBe("SQUASH");
+        expect(
+          variablesOf(action === "merge" ? "mergePullRequest(" : "enablePullRequestAutoMerge("),
+        ).toEqual([
+          {
+            input: {
+              pullRequestId: "PR_7",
+              mergeMethod: "SQUASH",
+              // Pinned to the head the message was read from, so it cannot describe other commits.
+              expectedHeadOid: "abc123",
+              commitBody: "Details\n\nCo-authored-by: Alice <alice@example.com>",
+            },
+          },
+        ]);
       }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.each(
-    GH_SHAPED_CASES([
-      {
-        description: "an unchanged message",
-        body: "Details\n\nCo-authored-by: Alice <alice@example.com>",
-        queued: false,
-      },
-      {
-        description: "a merge queue",
-        body: "Co-authored-by: Claude <noreply@anthropic.com>",
-        queued: true,
-      },
-    ] as const),
-  )("keeps GitHub's default message for $description", ({ body, queued }) =>
+  it.effect.each([
+    {
+      description: "an unchanged message",
+      body: "Details\n\nCo-authored-by: Alice <alice@example.com>",
+      queued: false,
+    },
+    {
+      description: "a merge queue",
+      body: "Co-authored-by: Claude <noreply@anthropic.com>",
+      queued: true,
+    },
+  ] as const)("keeps GitHub's default message for $description", ({ body, queued }) =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              encodeJson({
-                data: {
-                  repository: {
-                    pullRequest: {
-                      isMergeQueueEnabled: queued,
-                      headRefOid: "abc123",
-                      viewerMergeBodyText: body,
-                    },
-                  },
-                },
-              }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(output("")));
+      route(
+        ["query PullRequestMergeMessage", mergeMessage(body, queued)],
+        ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
+      );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       yield* cli.runPullRequestAction({
         cwd: "/w",
@@ -2142,54 +2162,48 @@ layer("GitHubPullRequestCli.layer", (it) => {
         action: "merge",
         removeAgentCreditsOnMerge: true,
       });
-      expect(callAt(0).args).toContain("method=MERGE");
-      expect(callAt(1).args).not.toContain("--body-file");
-      expect(callAt(1).stdin).toBeUndefined();
+      expect(variablesOf("query PullRequestMergeMessage")[0]?.["method"]).toBe("MERGE");
+      // A merge queue takes the pull request through auto-merge, with its own message.
+      expect(variablesOf(queued ? "enablePullRequestAutoMerge(" : "mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
+      ]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip(
-    "passes an explicitly empty body when the proposed message only credits an agent",
-    () =>
-      Effect.gen(function* () {
-        mockedExecute
-          .mockReturnValueOnce(
-            Effect.succeed(
-              output(
-                encodeJson({
-                  data: {
-                    repository: {
-                      pullRequest: {
-                        isMergeQueueEnabled: false,
-                        headRefOid: "abc123",
-                        viewerMergeBodyText: "Co-authored-by: Claude <noreply@anthropic.com>",
-                      },
-                    },
-                  },
-                }),
-              ),
-            ),
-          )
-          .mockReturnValueOnce(Effect.succeed(output("")));
-        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-        yield* cli.runPullRequestAction({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          action: "merge",
-          removeAgentCreditsOnMerge: true,
-        });
-        expect(callAt(1).stdin).toBe("");
-        expect(callAt(1).args).toContain("--body-file");
-      }),
+  it.effect("passes an explicitly empty body when the proposed message only credits an agent", () =>
+    Effect.gen(function* () {
+      route(
+        [
+          "query PullRequestMergeMessage",
+          mergeMessage("Co-authored-by: Claude <noreply@anthropic.com>"),
+        ],
+        ["query PullRequestActionState", actionState()],
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        removeAgentCreditsOnMerge: true,
+      });
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        {
+          input: {
+            pullRequestId: "PR_7",
+            mergeMethod: "MERGE",
+            expectedHeadOid: "abc123",
+            commitBody: "",
+          },
+        },
+      ]);
+    }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("does not fetch a message for rebase merges", () =>
+  it.effect("does not fetch a message for rebase merges", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route(["query PullRequestActionState", actionState()]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       yield* cli.runPullRequestAction({
         cwd: "/w",
@@ -2200,15 +2214,18 @@ layer("GitHubPullRequestCli.layer", (it) => {
         mergeMethod: "rebase",
         removeAgentCreditsOnMerge: true,
       });
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
-      expect(callAt(0).args).toContain("--rebase");
+      expect(variablesOf("query PullRequestMergeMessage")).toEqual([]);
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "REBASE" } },
+      ]);
     }),
   );
 
   it.effect("refuses to merge when the proposed message cannot be read", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(output('{"data":{"repository":{"pullRequest":null}}}')),
+      route(
+        ["query PullRequestMergeMessage", { data: { repository: { pullRequest: null } } }],
+        ["query PullRequestActionState", actionState()],
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       const result = yield* Effect.result(
@@ -2222,14 +2239,13 @@ layer("GitHubPullRequestCli.layer", (it) => {
         }),
       );
       expect(result._tag).toBe("Failure");
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("arms auto-merge with the same strategy a merge would have used", () =>
+  it.effect("arms auto-merge with the same strategy a merge would have used", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route(["query PullRequestActionState", actionState()]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2240,16 +2256,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
         action: "enable-auto-merge",
         mergeMethod: "squash",
       });
-      expect(callAt(0).args).toEqual([
-        "pr",
-        "merge",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--auto",
-        "--squash",
-      ]);
-
       // No strategy asked for is GitHub's own default, exactly as it is for a merge now.
       yield* cli.runPullRequestAction({
         cwd: "/w",
@@ -2258,22 +2264,39 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
         action: "enable-auto-merge",
       });
-      expect(callAt(1).args).toEqual([
-        "pr",
-        "merge",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--auto",
-        "--merge",
+
+      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
       ]);
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("takes auto-merge back off without naming a strategy", () =>
+  it.effect("merges at once when auto-merge is asked of a pull request that is ready now", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route(["query PullRequestActionState", actionState({ mergeStateStatus: "CLEAN" })]);
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+      });
+
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
+      ]);
+      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+    }),
+  );
+
+  it.effect("takes auto-merge back off without naming a strategy", () =>
+    Effect.gen(function* () {
+      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2285,31 +2308,13 @@ layer("GitHubPullRequestCli.layer", (it) => {
         mergeMethod: "squash",
       });
 
-      expect(callAt(0).args).toEqual([
-        "pr",
-        "merge",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--disable-auto",
-      ]);
+      expect(variablesOf("disablePullRequestAutoMerge(")).toEqual([{ pullRequestId: "PR_7" }]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("opens a pull request that reverts a merged pull request", () =>
+  it.effect("opens a pull request that reverts a merged pull request", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off - canned gh GraphQL response.
-            encodeJson({
-              data: { repository: { pullRequest: { id: "PR_7" } } },
-            }),
-          ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2320,19 +2325,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         action: "revert",
       });
 
-      expect(callAt(0).args).toContain("owner=acme");
-      expect(callAt(0).args).toContain("name=web");
-      expect(callAt(0).args).toContain("number=7");
-      expect(callAt(1).args).toEqual([
-        "api",
-        "graphql",
-        "--hostname",
-        "github.com",
-        "--input",
-        "-",
-      ]);
-      expect(callAt(1).stdin).toContain("revertPullRequest");
-      expect(callAt(1).stdin).toContain('"pullRequestId":"PR_7"');
+      expect(variablesOf("revertPullRequest(")).toEqual([{ pullRequestId: "PR_7" }]);
     }),
   );
 
@@ -2727,10 +2720,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("returns a pull request to draft by undoing ready", () =>
+  it.effect("returns a pull request to draft by converting it", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.runPullRequestAction({
@@ -2741,22 +2733,14 @@ layer("GitHubPullRequestCli.layer", (it) => {
         action: "draft",
       });
 
-      // gh has no `draft` command; going back is `ready --undo`.
-      expect(callAt(0).args).toEqual([
-        "pr",
-        "ready",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--undo",
-      ]);
+      expect(variablesOf("convertPullRequestToDraft(")).toEqual([{ pullRequestId: "PR_7" }]);
+      expect(variablesOf("markPullRequestReadyForReview(")).toEqual([]);
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("sends a comment body over stdin, never in argv", () =>
+  it.effect("sends a comment body as a variable, never inside the document", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.commentOnPullRequest({
@@ -2767,25 +2751,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
         body: "Looks good.",
       });
 
-      // argv shows up in process listings and in process-runner failure messages.
-      expect(callAt(0).args).toEqual([
-        "pr",
-        "comment",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--body-file",
-        "-",
-      ]);
-      expect(callAt(0).stdin).toBe("Looks good.");
-      expect(callAt(0).args).not.toContain("Looks good.");
+      expect(variablesOf("addComment(")).toEqual([{ subjectId: "PR_7", body: "Looks good." }]);
+      expect(queryAt(mockedExecute.mock.calls.length - 1)).not.toContain("Looks good.");
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("names the host on every repository it addresses", () =>
+  it.effect("names the host on every repository it addresses", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.query.includes("pullRequests(")
+            ? emptyList()
+            : emptySearch(),
+        ),
+      );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.listPullRequests({
@@ -2798,13 +2777,16 @@ layer("GitHubPullRequestCli.layer", (it) => {
         limit: 10,
       });
 
-      // A bare `owner/repo` resolves against github.com, which is a different repository.
-      expect(callAt(0).args).toContain("github.acme.dev/acme/web");
+      // A request sent to github.com would read a different repository of the same name.
+      assert.isAbove(mockedExecute.mock.calls.length, 0);
+      expect(new Set(mockedExecute.mock.calls.map(([call]) => call.host))).toEqual(
+        new Set(["github.acme.dev"]),
+      );
+      expect(searchOfCall(0)).toContain("repo:acme/web");
     }),
   );
 
-  // TODO(gh-api): port to the GitHubApi mock (fixtures still answer in gh shapes).
-  it.effect.skip("asks a GitHub Enterprise host for its own review threads", () =>
+  it.effect("asks a GitHub Enterprise host for its own review threads", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -2826,11 +2808,8 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      const args = callAt(0).args;
-      expect(args).toContain("--hostname");
-      expect(args).toContain("github.acme.dev");
-      expect(args).toContain("owner=acme");
-      expect(args).toContain("name=web");
+      expect(callAt(0).host).toBe("github.acme.dev");
+      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
     }),
   );
 
