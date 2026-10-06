@@ -789,7 +789,6 @@ it.effect.each([
   "returned-interrupt",
   "returned-interrupt-terminal",
   "superseded-attempt",
-] as const)(
-  "Stop recovers a stalled run after %s without changing a newer attempt",
-  (stalledRun) => stopEarlierBackgroundWork({ stalledRun }),
+] as const)("Stop recovers a stalled run after %s without changing a newer attempt", (stalledRun) =>
+  stopEarlierBackgroundWork({ stalledRun }),
 );
