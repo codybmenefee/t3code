@@ -1588,6 +1588,46 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps web API keys in the secret store and defaults to Firecrawl", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      assert.equal((yield* serverSettings.getSettings).web.provider, "firecrawl");
+
+      const saved = yield* serverSettings.updateSettings({
+        web: { provider: "exa", firecrawlApiKey: "fc-key", exaApiKey: "exa-key" },
+      });
+      assert.deepEqual(saved.web, {
+        provider: "exa",
+        firecrawlApiKey: "fc-key",
+        exaApiKey: "exa-key",
+        tavilyApiKey: "",
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "fc-key");
+      assert.notInclude(raw, "exa-key");
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).web;
+      assert.notInclude(forClient.firecrawlApiKey, "fc-key");
+      assert.isAbove(forClient.firecrawlApiKey.length, 0);
+      assert.equal(forClient.tavilyApiKey, "");
+
+      // Echoing the redacted keys back while switching provider keeps them.
+      yield* serverSettings.updateSettings({ web: { ...forClient, provider: "firecrawl" } });
+      const cleared = yield* serverSettings.updateSettings({ web: { exaApiKey: "" } });
+      assert.deepEqual(cleared.web, {
+        provider: "firecrawl",
+        firecrawlApiKey: "fc-key",
+        exaApiKey: "",
+        tavilyApiKey: "",
+      });
+      assert.isTrue(Option.isNone(yield* secrets.get("web-exa-api-key")));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("removes a Bitbucket secret once its token is cleared by hand in settings.json", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

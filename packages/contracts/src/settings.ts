@@ -1013,6 +1013,29 @@ export const BitbucketSettings = Schema.Struct({
 });
 export type BitbucketSettings = typeof BitbucketSettings.Type;
 
+/**
+ * The service behind the `web_search` and `web_fetch` tools T3 Code gives
+ * agents. `builtin` turns those tools off so each CLI keeps its own web tools.
+ */
+export const WebToolProvider = Schema.Literals(["firecrawl", "exa", "tavily", "builtin"]);
+export type WebToolProvider = typeof WebToolProvider.Type;
+export const DEFAULT_WEB_TOOL_PROVIDER: WebToolProvider = "firecrawl";
+
+/**
+ * Web tool settings for this environment. The API keys live in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set. Firecrawl works without a key on eligible networks.
+ */
+export const WebSettings = Schema.Struct({
+  provider: WebToolProvider.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WEB_TOOL_PROVIDER)),
+  ),
+  firecrawlApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  exaApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  tavilyApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type WebSettings = typeof WebSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1423,6 +1446,7 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  web: WebSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1712,6 +1736,15 @@ export const ServerSettingsPatch = Schema.Struct({
       email: Schema.optionalKey(TrimmedString),
       accessToken: Schema.optionalKey(TrimmedString),
       apiToken: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  /** An empty key clears it; an omitted one keeps what the server has. */
+  web: Schema.optionalKey(
+    Schema.Struct({
+      provider: Schema.optionalKey(WebToolProvider),
+      firecrawlApiKey: Schema.optionalKey(TrimmedString),
+      exaApiKey: Schema.optionalKey(TrimmedString),
+      tavilyApiKey: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(

@@ -33,6 +33,10 @@ ACP fallback: some ACP agents accept the injected MCP server but fail to expose 
 ### Showing visuals
 
 When a chart, table, diagram, image collage, or mockup would say more than prose, build a self-contained HTML page, check it with \`html_preview\`, then publish it with \`html_render\` before your final reply. The reader sees the page above that reply, so don't announce or restate it; add only what it doesn't say.
+
+### Web search and fetch
+
+Use \`web_search\` to search the web and \`web_fetch\` to read a page, in place of your own web search and fetch tools; they go through the web provider the user picked for this environment. If they report that T3 Code web tools are off, use your own web tools for the rest of the session.
 `;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `

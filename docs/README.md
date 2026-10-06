@@ -13,6 +13,7 @@
 - [Keyboard shortcuts](./user/keybindings.md)
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
+- [Web search and fetch](./user/web-tools.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)

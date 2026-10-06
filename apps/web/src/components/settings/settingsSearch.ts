@@ -18,6 +18,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/web"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -93,6 +94,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/web": "Web",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -587,6 +589,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "web-provider",
+    title: "Web provider",
+    to: "/settings/web",
+    searchTerms: [
+      "web search fetch scrape firecrawl exa tavily built-in agent tools web_search web_fetch internet browse",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "web-provider-api-key",
+    title: "Web provider API key",
+    to: "/settings/web",
+    searchTerms: ["firecrawl exa tavily api key credentials secret token"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -914,6 +934,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/web": "environment-defaults",
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
