@@ -24,6 +24,8 @@ import {
 } from "@t3tools/shared/sourceControl";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -52,12 +54,8 @@ export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnava
   "GitHubCliUnavailableError",
   gitHubCliFailureFields,
 ) {
-  get detail(): string {
-    return "GitHub CLI (`gh`) is required but not available on PATH. Install it and run `gh auth login`, or set GH_TOKEN.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in execute: ${this.detail}`;
+    return "GitHub CLI (`gh`) is required but not available on PATH. Install it and run `gh auth login`, or set GH_TOKEN.";
   }
 }
 
@@ -65,12 +63,8 @@ export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAu
   "GitHubCliAuthenticationError",
   gitHubCliFailureFields,
 ) {
-  get detail(): string {
-    return "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in execute: ${this.detail}`;
+    return "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
   }
 }
 
@@ -78,12 +72,8 @@ export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLim
   "GitHubCliRateLimitError",
   { ...gitHubCliFailureFields, retryAt: Schema.optionalKey(Schema.Finite) },
 ) {
-  get detail(): string {
-    return "GitHub API rate limit exceeded. Requests resume when the limit resets.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in execute: ${this.detail}`;
+    return "GitHub API rate limit exceeded. Requests resume when the limit resets.";
   }
 }
 
@@ -91,12 +81,8 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedError<GitHubPul
   "GitHubPullRequestNotFoundError",
   gitHubCliFailureFields,
 ) {
-  get detail(): string {
-    return "Pull request not found. Check the PR number or URL and try again.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in execute: ${this.detail}`;
+    return "Pull request not found. Check the PR number or URL and try again.";
   }
 }
 
@@ -104,12 +90,8 @@ export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandEr
   "GitHubCliCommandError",
   { ...gitHubCliFailureFields, httpStatus: Schema.optional(Schema.Int) },
 ) {
-  get detail(): string {
-    return "GitHub request failed.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in execute: ${this.detail}`;
+    return "GitHub request failed.";
   }
 }
 
@@ -123,12 +105,8 @@ export class GitHubPullRequestListDecodeError extends Schema.TaggedError<GitHubP
   "GitHubPullRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
-  get detail(): string {
-    return "GitHub returned an invalid pull request list.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in listOpenPullRequests: ${this.detail}`;
+    return "GitHub returned an invalid pull request list.";
   }
 }
 
@@ -136,12 +114,8 @@ export class GitHubChangeRequestListDecodeError extends Schema.TaggedError<GitHu
   "GitHubChangeRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
-  get detail(): string {
-    return "GitHub returned an invalid change request list.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in listChangeRequests: ${this.detail}`;
+    return "GitHub returned an invalid change request list.";
   }
 }
 
@@ -149,12 +123,8 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedError<GitHubPullR
   "GitHubPullRequestDecodeError",
   gitHubCliDecodeFields,
 ) {
-  get detail(): string {
-    return "GitHub returned an invalid pull request.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in getPullRequest: ${this.detail}`;
+    return "GitHub returned an invalid pull request.";
   }
 }
 
@@ -162,12 +132,8 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedError<GitHubReposi
   "GitHubRepositoryDecodeError",
   gitHubCliDecodeFields,
 ) {
-  get detail(): string {
-    return "GitHub returned an invalid repository.";
-  }
-
   override get message(): string {
-    return `GitHub CLI failed in getRepositoryCloneUrls: ${this.detail}`;
+    return "GitHub returned an invalid repository.";
   }
 }
 
@@ -592,6 +558,7 @@ export function pullRequestCheckoutBranchName(input: {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const environment = yield* HostProcessEnvironment;
   const api = yield* GitHubApi.GitHubApi;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -617,12 +584,8 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly host?: string | undefined;
   }) {
-    const envRepository = globalThis.process.env.GH_REPO?.trim();
-    const defaultHost = (
-      input.host ??
-      globalThis.process.env.GH_HOST ??
-      "github.com"
-    ).toLowerCase();
+    const envRepository = environment.GH_REPO?.trim();
+    const defaultHost = (input.host ?? environment.GH_HOST ?? "github.com").toLowerCase();
     if (envRepository) {
       const locator = parseGitHubRepositorySelector(envRepository, defaultHost);
       if (locator !== null) return locator;
@@ -1057,7 +1020,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const fallbackHost = (yield* resolveRepository({ cwd: input.cwd }).pipe(
           Effect.map((locator) => locator.host),
-          Effect.orElseSucceed(() => globalThis.process.env.GH_HOST ?? "github.com"),
+          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
         )).toLowerCase();
         const locator = parseGitHubRepositorySelector(input.repository, fallbackHost);
         if (locator === null) {
@@ -1069,7 +1032,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const locator = parseGitHubRepositorySelector(
           input.repository,
-          (globalThis.process.env.GH_HOST ?? "github.com").toLowerCase(),
+          (environment.GH_HOST ?? "github.com").toLowerCase(),
         );
         const viewer = locator === null ? null : yield* readViewerLogin(input.cwd, locator.host);
         const owner = locator?.owner ?? viewer;
