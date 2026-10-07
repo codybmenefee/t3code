@@ -107,6 +107,10 @@ import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codex
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
+  defaultWebToolInstructions,
+  readExternalMcpSessionTools,
+} from "../../toolIntegrations/externalMcpServers.ts";
+import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
   type ProviderAdapterDriverCreateInput,
@@ -724,10 +728,12 @@ export function buildCodexTurnStartParams(input: {
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
+    // A default web tool is a preference; Codex keeps its own web search as the fallback.
+    const toolInstructions = defaultWebToolInstructions(readExternalMcpSessionTools());
     const developerInstructions =
-      input.hasT3Mcp !== true
+      input.hasT3Mcp !== true && toolInstructions === ""
         ? undefined
-        : buildCodexDeveloperInstructions(input.runtimePolicy.interactionMode);
+        : buildCodexDeveloperInstructions(input.runtimePolicy.interactionMode) + toolInstructions;
     const additionalContext =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
@@ -1284,23 +1290,37 @@ export function codexThreadRuntimeParams(input: {
 } {
   const mcpSession =
     input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
+  // Tools added in Settings → Tools ride along with T3's own server.
+  const tools = readExternalMcpSessionTools();
+  const mcpServers: Record<string, Schema.Json> = {
+    ...(mcpSession === undefined
+      ? {}
+      : {
+          "t3-code": {
+            url: mcpSession.endpoint,
+            http_headers: {
+              Authorization: mcpSession.authorizationHeader,
+            },
+          },
+        }),
+    ...Object.fromEntries(
+      tools.servers.map((server) => [
+        server.name,
+        // Codex attaches only the tool groups the user turned on.
+        {
+          url: server.url,
+          http_headers: { ...server.headers },
+          enabled_tools: [...server.enabledTools],
+        },
+      ]),
+    ),
+  };
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      ...(mcpSession === undefined
-        ? {}
-        : {
-            mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
-              },
-            },
-          }),
+      ...(Object.keys(mcpServers).length === 0 ? {} : { mcp_servers: mcpServers }),
     },
   };
 }

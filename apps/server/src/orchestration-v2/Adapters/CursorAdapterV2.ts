@@ -46,6 +46,10 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  defaultWebToolInstructions,
+  readExternalMcpSessionTools,
+} from "../../toolIntegrations/externalMcpServers.ts";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import {
@@ -215,6 +219,13 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
         Authorization: session.authorizationHeader,
       },
     },
+    // Tools added in Settings → Tools ride along with T3's own server.
+    ...Object.fromEntries(
+      readExternalMcpSessionTools().servers.map((server) => [
+        server.name,
+        { type: "http" as const, url: server.url, headers: { ...server.headers } },
+      ]),
+    ),
   };
 }
 
@@ -2126,15 +2137,22 @@ export function makeCursorAdapterV2(
                 .map((skill) => skill.name),
             );
           }
+          // Cursor has no system prompt; the default web tool rides on the first message.
+          const toolInstructions =
+            turnInput.runOrdinal === 1
+              ? defaultWebToolInstructions(readExternalMcpSessionTools()).trimStart()
+              : "";
           const userText = t3OrchestrationPromptForFirstRun({
-            prompt: providerMessageTextWithAttachmentPaths({
-              text:
-                cursorSkillNames === undefined
-                  ? rawText
-                  : rewriteCursorSkillMentions(rawText, cursorSkillNames),
-              attachments: turnInput.message.attachments,
-              attachmentsDir: serverConfig.attachmentsDir,
-            }),
+            prompt:
+              (toolInstructions === "" ? "" : `${toolInstructions}\n`) +
+              providerMessageTextWithAttachmentPaths({
+                text:
+                  cursorSkillNames === undefined
+                    ? rawText
+                    : rewriteCursorSkillMentions(rawText, cursorSkillNames),
+                attachments: turnInput.message.attachments,
+                attachmentsDir: serverConfig.attachmentsDir,
+              }),
             runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: cursorMcpServers(turnInput.threadId) !== undefined,
           });

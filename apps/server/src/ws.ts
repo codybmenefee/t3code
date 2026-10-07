@@ -226,6 +226,7 @@ import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as ToolIntegrations from "./toolIntegrations/ToolIntegrations.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -1297,6 +1298,7 @@ const layerWsRpc = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const toolIntegrations = yield* ToolIntegrations.ToolIntegrations;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2404,6 +2406,14 @@ const layerWsRpc = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.toolIntegrationStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.toolIntegrationStatus, toolIntegrations.status(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.toolIntegrationRun]: (input) =>
+          observeRpcEffect(WS_METHODS.toolIntegrationRun, toolIntegrations.run(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerConsumeResetCredit,

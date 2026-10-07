@@ -251,6 +251,10 @@
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
     },
+    "./state/tool-integrations": {
+      "types": "./src/state/toolIntegrations.ts",
+      "default": "./src/state/toolIntegrations.ts"
+    },
     "./state/terminal": {
       "types": "./src/state/terminal.ts",
       "default": "./src/state/terminal.ts"

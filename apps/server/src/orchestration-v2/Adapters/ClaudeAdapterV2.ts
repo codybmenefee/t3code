@@ -118,6 +118,10 @@ import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3Orchestrati
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { mcpToolPresentation, normalizeMcpText } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  defaultWebToolInstructions,
+  readExternalMcpSessionTools,
+} from "../../toolIntegrations/externalMcpServers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
@@ -819,6 +823,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Appended to the system prompt, e.g. which attached tool is the default for web work. */
+  readonly toolInstructions?: string;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -911,7 +917,8 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append:
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS) +
+        (input.toolInstructions ?? ""),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -970,10 +977,34 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly toolInstructions?: string;
+  readonly disallowedTools?: ReadonlyArray<string>;
 } {
   const session = McpProviderSession.readMcpProviderSession(input.threadId);
+  // Tools added in Settings → Tools ride along with T3's own server.
+  const tools = readExternalMcpSessionTools();
+  const toolServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = Object.fromEntries(
+    tools.servers.map((server) => [
+      server.name,
+      { type: "http" as const, url: server.url, headers: { ...server.headers } },
+    ]),
+  );
+  // A default web tool is a preference; Claude Code keeps its own web tools as the fallback.
+  const toolInstructions = defaultWebToolInstructions(tools);
+  // Tool groups the user left off; Claude Code names MCP tools mcp__<server>__<tool>.
+  const disallowedTools = tools.servers.flatMap((server) =>
+    server.disabledTools.map((tool) => `mcp__${server.name}__${tool}`),
+  );
+  const instructions = {
+    ...(toolInstructions === "" ? {} : { toolInstructions }),
+    ...(disallowedTools.length === 0 ? {} : { disallowedTools }),
+  };
   if (session === undefined) {
-    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+    return {
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(tools.servers.length === 0 ? {} : { mcpServers: toolServers }),
+      ...instructions,
+    };
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
@@ -989,7 +1020,9 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
+      ...toolServers,
     },
+    ...instructions,
   };
 }
 
@@ -1623,6 +1656,8 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly toolInstructions?: string;
+    readonly disallowedTools?: ReadonlyArray<string>;
   },
 ): string {
   return JSON.stringify({
@@ -1633,6 +1668,10 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    // A changed default web tool must reopen the query to reach the system prompt.
+    toolInstructions: mcpOverrides.toolInstructions,
+    // A changed tool group must reopen the query, or the live process keeps the old tools.
+    disallowedTools: mcpOverrides.disallowedTools,
   });
 }
 

@@ -395,6 +395,10 @@
       "types": "./src/codexAuthCallback.ts",
       "import": "./src/codexAuthCallback.ts"
     },
+    "./oauthLoopbackReceiver": {
+      "types": "./src/oauthLoopbackReceiver.ts",
+      "import": "./src/oauthLoopbackReceiver.ts"
+    },
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
