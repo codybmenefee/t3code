@@ -22,6 +22,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   }>;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  /** The web tool choices, when the web tool picker has folded into this menu. */
+  webToolMenuContent?: ReactNode;
   size?: "sm" | "xs";
   /**
    * The resting strip keeps this menu mounted out of flow while every block
@@ -89,6 +91,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.webToolMenuContent ? (
+          <>
+            <MenuDivider />
+            {props.webToolMenuContent}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

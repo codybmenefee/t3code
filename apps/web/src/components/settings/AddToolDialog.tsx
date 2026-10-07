@@ -87,9 +87,7 @@ export function AddToolDialog({
       <WizardPopup>
         <WizardHeader
           title="Add tool"
-          description={
-            <>Add a web tool to the agent sessions T3 Code starts on {environmentLabel}.</>
-          }
+          description={<>Add a web tool to sessions on {environmentLabel}.</>}
         >
           <WizardSteps
             steps={STEPS}
@@ -152,10 +150,10 @@ export function AddToolDialog({
                 description={
                   <>
                     {tool.keylessNote !== null
-                      ? "Optional. Without one, sessions connect keyless."
+                      ? "Optional. Unlocks every tool."
                       : tool.signIn
-                        ? `Paste a key, or add ${tool.label} now and sign in from its page.`
-                        : `Required. Sessions get ${tool.label} once a key is saved.`}{" "}
+                        ? "Optional. You can sign in after adding instead."
+                        : "Required."}{" "}
                     <InlineButton
                       render={
                         <a href={tool.apiKeyLink} target="_blank" rel="noreferrer noopener" />
@@ -179,7 +177,7 @@ export function AddToolDialog({
                     type="password"
                     autoComplete="off"
                     size="sm"
-                    placeholder="Paste your API key"
+                    placeholder="Paste API key"
                     value={key}
                     disabled={saving}
                     onChange={(event) => setKey(event.target.value)}

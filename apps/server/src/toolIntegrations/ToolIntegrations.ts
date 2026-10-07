@@ -234,7 +234,7 @@ const make = Effect.gen(function* () {
           state: "unauthorized",
           tools: [],
           serverVersion: null,
-          message: "Add an API key to connect.",
+          message: "Needs an API key.",
         } satisfies ToolIntegrationConnection;
       }
       const post = (body: unknown, sessionId: string | null) =>
@@ -270,10 +270,10 @@ const make = Effect.gen(function* () {
           serverVersion: null,
           message:
             target.auth === "keyless"
-              ? "The server refused a keyless connection from this machine. Add an API key or sign in."
+              ? "Keyless access refused. Add an API key or sign in."
               : target.auth === "oauth"
-                ? "The sign-in was refused or has expired. Sign in again."
-                : "The server rejected the API key.",
+                ? "Sign-in expired. Sign in again."
+                : "API key rejected.",
         } satisfies ToolIntegrationConnection;
       }
       if (initialized.status < 200 || initialized.status >= 300) {
@@ -281,7 +281,7 @@ const make = Effect.gen(function* () {
           state: "error",
           tools: [],
           serverVersion: null,
-          message: `The server answered HTTP ${initialized.status}.`,
+          message: `Server returned HTTP ${initialized.status}.`,
         } satisfies ToolIntegrationConnection;
       }
       const serverInfo = decodeServerInfo(
@@ -317,7 +317,7 @@ const make = Effect.gen(function* () {
           state: "unreachable",
           tools: [],
           serverVersion: null,
-          message: "Could not reach the server from this machine.",
+          message: "Can't reach the server.",
         } satisfies ToolIntegrationConnection),
       ),
     );

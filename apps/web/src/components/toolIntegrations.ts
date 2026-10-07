@@ -30,19 +30,17 @@ export const TOOL_INTEGRATIONS: Readonly<Record<ToolIntegrationId, ToolIntegrati
   firecrawl: {
     label: "Firecrawl",
     icon: FirecrawlIcon,
-    description:
-      "Firecrawl's MCP server gives agents web search, scraping, crawling, and structured data tools.",
+    description: "Web search, scraping, crawling, and document parsing.",
     docs: "https://docs.firecrawl.dev/mcp-server",
     apiKeyLink: "https://www.firecrawl.dev/app/api-keys",
-    keylessNote:
-      "Keyless sessions get search, scrape, and parse within daily limits. An API key or sign-in unlocks every tool and your plan's limits.",
+    keylessNote: "Works keyless within daily limits.",
     signIn: true,
     firstParty: true,
   },
   exa: {
     label: "Exa",
     icon: ExaIcon,
-    description: "Exa's MCP server gives agents web search and page reading.",
+    description: "Web search and page reading.",
     docs: "https://docs.exa.ai/reference/exa-mcp",
     apiKeyLink: "https://dashboard.exa.ai/api-keys",
     keylessNote: null,
@@ -52,7 +50,7 @@ export const TOOL_INTEGRATIONS: Readonly<Record<ToolIntegrationId, ToolIntegrati
   tavily: {
     label: "Tavily",
     icon: TavilyIcon,
-    description: "Tavily's MCP server gives agents web search, extraction, mapping, and crawling.",
+    description: "Web search, extraction, mapping, and crawling.",
     docs: "https://docs.tavily.com/documentation/mcp",
     apiKeyLink: "https://app.tavily.com/home",
     keylessNote: null,
@@ -76,7 +74,7 @@ const TOOL_GROUP_LABELS: Readonly<
       description: "Search the web, read pages, map and crawl sites.",
     },
     alexandria: { label: "Alexandria", description: "Find the right tool or API for a task." },
-    feedback: { label: "Feedback", description: "Rate results and report problems to Firecrawl." },
+    feedback: { label: "Feedback", description: "Rate results and report problems." },
     account: { label: "Account", description: "Check remaining credits." },
     documents: { label: "Documents", description: "Turn PDFs and other files into text." },
     browser: {
@@ -99,7 +97,7 @@ const TOOL_GROUP_LABELS: Readonly<
       description: "Search the web, read pages, map and crawl sites.",
     },
     research: { label: "Research", description: "Run multi-step research on a topic." },
-    feedback: { label: "Feedback", description: "Rate results and report problems to Tavily." },
+    feedback: { label: "Feedback", description: "Rate results and report problems." },
   },
 };
 
@@ -143,7 +141,7 @@ export function toolGroupViews(
     views.push({
       id: "other",
       label: "Other",
-      description: "New tools T3 Code has not grouped yet. They stay off.",
+      description: "Not grouped yet. Always off.",
       enabled: false,
       tools: other,
       available: true,
@@ -151,9 +149,6 @@ export function toolGroupViews(
   }
   return views;
 }
-
-/** Agents whose sessions get attached tools today. */
-export const TOOL_INTEGRATION_SESSION_AGENTS = ["Claude Code", "Codex", "Cursor"] as const;
 
 export interface ToolIntegrationNotice {
   /** Dismissal key; the provider-update dismissals store keeps it, so it is namespaced. */
@@ -177,8 +172,6 @@ export function toolIntegrationNotice(status: ToolIntegrationStatus): ToolIntegr
           ? `${label} needs an API key or sign-in here`
           : `${label} needs you to sign in again`
         : `${label} is not connecting`,
-    description:
-      status.connection.message ??
-      `Agents in new sessions cannot use ${label} until its server connects.`,
+    description: status.connection.message ?? `New sessions can't use ${label} until it connects.`,
   };
 }

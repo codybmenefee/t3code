@@ -16,12 +16,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { toolIntegrationsEnvironment } from "../../state/toolIntegrations";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  type ToolGroupView,
-  toolGroupViews,
-  TOOL_INTEGRATION_SESSION_AGENTS,
-  TOOL_INTEGRATIONS,
-} from "../toolIntegrations";
+import { type ToolGroupView, toolGroupViews, TOOL_INTEGRATIONS } from "../toolIntegrations";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
@@ -53,7 +48,7 @@ export function ToolsSettingsPanel() {
         <SettingsSection title="Tools">
           <SettingsRow
             title="No environment connected"
-            description="Connect an environment to manage the tools its agents get."
+            description="Connect an environment to manage its tools."
           />
         </SettingsSection>
       ) : (
@@ -133,8 +128,7 @@ function Tools({
     >
       {readOnly ? (
         <p className="px-1 text-xs text-muted-foreground/80">
-          Tools apply to the whole environment. Select the environment, not a project, to make
-          changes.
+          Tools apply per environment. Select the environment to make changes.
         </p>
       ) : null}
       <SettingsGroup
@@ -295,7 +289,7 @@ function ToolRow({
               </button>
             }
           />
-          <TooltipPopup side="top">Add {label} to new sessions; works keyless</TooltipPopup>
+          <TooltipPopup side="top">Add {label}</TooltipPopup>
         </Tooltip>
       )}
       <span
@@ -368,7 +362,7 @@ function ToolGroups({
         ))}
       </ul>
       <p className="border-t border-border/50 px-4 py-2.5 text-xs text-muted-foreground/80">
-        Cursor sessions get every tool; its SDK cannot turn off single MCP tools.
+        Cursor sessions get every tool.
       </p>
     </FoldedSettingsSection>
   );
@@ -414,7 +408,7 @@ function BuiltinRow({
             {isDefault ? <DefaultBadge /> : null}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground/80">
-            {isDefault ? "Agents' own web tools" : "Fallback · agents' own web tools"}
+            {isDefault ? "Agents' own web tools" : "Fallback"}
           </span>
         </span>
       </span>
@@ -447,8 +441,8 @@ function BuiltinPane({
         title="Agents' own web tools"
         description={
           isDefault
-            ? "Agents use their own web search and fetch, as they do outside T3 Code. Set a tool as the default to have them use it first."
-            : "Agents keep their own web search and fetch, and use them when the default tool is unavailable or fails."
+            ? "Agents use their own web search and fetch."
+            : "Used when the default tool is unavailable."
         }
       />
     </SettingsSection>
@@ -505,7 +499,7 @@ function NotAddedPane({
     <PaneSection id={id} state="Not added">
       <SettingsRow
         title={`Add ${label}`}
-        description={`${description} ${keylessNote ?? ""}`}
+        description={keylessNote === null ? description : `${description} ${keylessNote}`}
         control={
           <Button size="xs" onClick={onAdd}>
             <PlusIcon className="size-3" />
@@ -615,7 +609,7 @@ function ToolPane({
           title="Connection"
           description={
             connected
-              ? `${connectionSummary(data)}. Attached to every ${TOOL_INTEGRATION_SESSION_AGENTS.join(", ")} session T3 Code starts; open sessions pick it up when they restart.`
+              ? `${connectionSummary(data)}. Applies to new sessions.`
               : (data.connection.message ?? `${label}'s server is not answering.`)
           }
           control={
@@ -653,10 +647,10 @@ function ToolPane({
             title={`Sign in with ${label}`}
             description={
               data.auth === "oauth"
-                ? `Authenticated. Sessions use your ${label} account's tools and limits.`
+                ? `Using your ${label} account.`
                 : data.signInPending
-                  ? "Waiting for you to finish in your browser; this page updates when you do. The sign-in stays open for 5 minutes. If you closed the page, restart it."
-                  : `Sign in through your browser. Takes precedence over an API key. ${data.auth === "keyless" ? (keylessNote ?? "") : ""}`
+                  ? "Finish signing in in your browser."
+                  : "Optional. Overrides the API key."
             }
             control={
               data.auth === "oauth" ? (
@@ -688,13 +682,13 @@ function ToolPane({
             <>
               {data.apiKeySaved
                 ? data.auth === "oauth"
-                  ? "Stored, and used if you sign out."
-                  : "Stored. Sessions send it to the server."
+                  ? "Stored. Used when signed out."
+                  : "Stored."
                 : keylessNote !== null
-                  ? "Optional. Without one, sessions connect keyless."
+                  ? "Optional. Unlocks every tool."
                   : signIn
-                    ? `Sessions get ${label} once a key is saved or you sign in.`
-                    : `Required. Sessions get ${label} once a key is saved.`}{" "}
+                    ? "Required unless signed in."
+                    : "Required."}{" "}
               <InlineButton
                 render={<a href={apiKeyLink} target="_blank" rel="noreferrer noopener" />}
               >
@@ -720,9 +714,7 @@ function ToolPane({
               autoComplete="off"
               size="sm"
               aria-label={`${label} API key`}
-              placeholder={
-                data.apiKeySaved ? "Stored secret, enter a new value to replace" : "Not set"
-              }
+              placeholder={data.apiKeySaved ? "Paste a new key to replace" : "Paste API key"}
               value={draft}
               disabled={busy}
               onChange={(event) => setDraft(event.target.value)}
@@ -745,11 +737,11 @@ function ToolPane({
       </SettingsSection>
       <SettingsGroup>
         <SettingsRow
-          title={`Remove ${label} from T3 Code`}
+          title={`Remove ${label}`}
           description={
             firstParty
-              ? `New sessions stop getting its server${isDefault ? ", and Built-in becomes the default" : ""}. The stored key and sign-in stay until you remove them.`
-              : `New sessions stop getting its server${isDefault ? ", and Built-in becomes the default" : ""}. Its stored key${signIn ? " and sign-in are" : " is"} deleted, and you can add it again from the + button.`
+              ? "New sessions stop using it. Its key and sign-in stay stored."
+              : `New sessions stop using it, and its key${signIn ? " and sign-in are" : " is"} deleted.`
           }
           control={
             <Button

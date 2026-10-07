@@ -261,6 +261,11 @@ import {
 } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  ComposerWebToolMenuItems,
+  ComposerWebToolPicker,
+  useComposerWebTools,
+} from "./ComposerWebToolPicker";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -2956,6 +2961,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     controlsVisible: restingControlsVisible,
   } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
+  // The web tool block shows once a web tool is added; it folds first on narrow composers.
+  const webToolBlockCount = useComposerWebTools(environmentId).added.length > 0 ? 1 : 0;
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -5345,7 +5352,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || restingHiddenBlockCount > 1 + webToolBlockCount,
   });
   const restingBlockDefs = [
     ...(providerTraitsPicker
@@ -5370,12 +5377,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={composerControlsHidden || restingHiddenBlockCount > webToolBlockCount}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
+    ...(webToolBlockCount > 0
+      ? [
+          {
+            id: "web",
+            content: (
+              <ComposerWebToolPicker
+                environmentId={environmentId}
+                size={composerControlsCollapsed ? "xs" : "sm"}
+                hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -5536,6 +5557,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+            }
+            webToolMenuContent={
+              hiddenRestingBlockIds.includes("web") ? (
+                <ComposerWebToolMenuItems environmentId={environmentId} />
+              ) : undefined
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
