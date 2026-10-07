@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { GlobeIcon, Settings2Icon } from "lucide-react";
 import { memo } from "react";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { TOOL_INTEGRATIONS } from "../toolIntegrations";
@@ -51,6 +51,12 @@ export function useComposerWebTools(environmentId: EnvironmentId) {
     });
   };
   return { added, current, select };
+}
+
+/** Whether the composer shows the picker: a web tool is added and the user has not hidden it. */
+export function useComposerWebToolPickerVisible(environmentId: EnvironmentId): boolean {
+  const visible = useClientSettings((settings) => settings.composerWebProviderVisible);
+  return useComposerWebTools(environmentId).added.length > 0 && visible;
 }
 
 /** The web tool choices, shared by the picker and the composer's overflow menu. */

@@ -1,5 +1,6 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_CLIENT_SETTINGS,
   type EnvironmentId,
   type ToolIntegrationAction,
   ToolIntegrationId,
@@ -10,7 +11,11 @@ import { ExternalLinkIcon, GlobeIcon, PlusIcon, RefreshCwIcon } from "lucide-rea
 import { type ReactNode, useEffect, useState } from "react";
 
 import { cn } from "~/lib/utils";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentSettings,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { readLocalApi } from "../../localApi";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -25,7 +30,12 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsGroup } from "./SettingsGroup";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { AddToolDialog } from "./AddToolDialog";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -59,6 +69,7 @@ export function ToolsSettingsPanel() {
           readOnly={readOnly}
         />
       )}
+      <ToolsBehavior />
     </SettingsPageContainer>
   );
 }
@@ -84,12 +95,16 @@ function Tools({
   const [adding, setAdding] = useState(false);
   const patchTools = (patch: ToolIntegrationSettingsPatch) =>
     updateSettings({ environmentId, input: { patch: { toolIntegrations: patch } } });
-  const setEnabled = (id: ToolIntegrationId, enabled: boolean) =>
-    patchTools({
+  const updateClientSettings = useUpdateClientSettings();
+  const setEnabled = (id: ToolIntegrationId, enabled: boolean) => {
+    // Adding a tool shows the composer picker again; the user can still hide it after.
+    if (enabled) void updateClientSettings({ composerWebProviderVisible: true });
+    return patchTools({
       [id]: { enabled },
       // A removed tool cannot stay the default; Built-in takes over.
       ...(!enabled && tools.defaultWebTool === id ? { defaultWebTool: null } : {}),
     });
+  };
   const addable = TOOL_IDS.filter((id) => !tools[id].enabled);
   // First-party tools always show; others show once added and leave when removed.
   const listed = TOOL_IDS.filter((id) => TOOL_INTEGRATIONS[id].firstParty || tools[id].enabled);
@@ -207,6 +222,41 @@ function Tools({
           void setEnabled(id, true);
           setSelected(id);
         }}
+      />
+    </SettingsSection>
+  );
+}
+
+/** Device preferences, so they stay editable in a read-only project scope. */
+function ToolsBehavior() {
+  const visible = useClientSettings((settings) => settings.composerWebProviderVisible);
+  const updateClientSettings = useUpdateClientSettings();
+  return (
+    <SettingsSection title="Behavior">
+      <SettingsRow
+        {...searchableSetting("web-provider-in-chat")}
+        description="Pick the web provider from the composer."
+        resetAction={
+          visible !== DEFAULT_CLIENT_SETTINGS.composerWebProviderVisible ? (
+            <SettingResetButton
+              label="web provider in chat"
+              onClick={() =>
+                void updateClientSettings({
+                  composerWebProviderVisible: DEFAULT_CLIENT_SETTINGS.composerWebProviderVisible,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={visible}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({ composerWebProviderVisible: Boolean(checked) })
+            }
+            aria-label="Show web provider in chat"
+          />
+        }
       />
     </SettingsSection>
   );

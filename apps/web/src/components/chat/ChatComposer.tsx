@@ -264,7 +264,7 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import {
   ComposerWebToolMenuItems,
   ComposerWebToolPicker,
-  useComposerWebTools,
+  useComposerWebToolPickerVisible,
 } from "./ComposerWebToolPicker";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -2961,8 +2961,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     controlsVisible: restingControlsVisible,
   } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
-  // The web tool block shows once a web tool is added; it folds first on narrow composers.
-  const webToolBlockCount = useComposerWebTools(environmentId).added.length > 0 ? 1 : 0;
+  // The web tool block shows once a web tool is added, unless hidden; it folds first when narrow.
+  const webToolBlockCount = useComposerWebToolPickerVisible(environmentId) ? 1 : 0;
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress

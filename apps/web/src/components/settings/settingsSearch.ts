@@ -597,6 +597,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "web-provider-in-chat",
+    title: "Show web provider in chat",
+    to: "/settings/tools",
+    searchTerms: ["composer chat input picker firecrawl exa tavily web provider show hide"],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

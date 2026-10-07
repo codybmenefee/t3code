@@ -93,6 +93,15 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("ClientSettings web provider picker", () => {
+  it("shows the picker until the user hides it", () => {
+    expect(decodeClientSettings({}).composerWebProviderVisible).toBe(true);
+    expect(
+      decodeClientSettings({ composerWebProviderVisible: false }).composerWebProviderVisible,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings rich text composer", () => {
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
