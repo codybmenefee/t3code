@@ -18,6 +18,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/tools"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -93,6 +94,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/tools": "Tools",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -593,6 +595,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "web-tools",
+    title: "Web",
+    to: "/settings/tools",
+    searchTerms: [
+      "firecrawl mcp server tools web search scrape crawl agents sessions api key sign in oauth keyless default claude codex cursor",
+    ],
+  },
+  {
+    id: "web-provider-in-chat",
+    title: "Show web provider in chat",
+    to: "/settings/tools",
+    searchTerms: ["composer chat input picker firecrawl exa tavily web provider show hide"],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -929,6 +945,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
+  // Tools, like Providers, edit one machine and render at any selection.
+  "/settings/tools": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
