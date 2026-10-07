@@ -17,6 +17,13 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import {
+  ToolIntegrationError,
+  ToolIntegrationRunInput,
+  ToolIntegrationRunResult,
+  ToolIntegrationStatus,
+  ToolIntegrationStatusInput,
+} from "./toolIntegrations.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -456,6 +463,8 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  toolIntegrationStatus: "toolIntegrations.status",
+  toolIntegrationRun: "toolIntegrations.run",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
@@ -609,6 +618,18 @@ const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsToolIntegrationStatusRpc = Rpc.make(WS_METHODS.toolIntegrationStatus, {
+  payload: ToolIntegrationStatusInput,
+  success: ToolIntegrationStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsToolIntegrationRunRpc = Rpc.make(WS_METHODS.toolIntegrationRun, {
+  payload: ToolIntegrationRunInput,
+  success: ToolIntegrationRunResult,
+  error: Schema.Union([ToolIntegrationError, EnvironmentAuthorizationError]),
 });
 
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
@@ -1785,6 +1806,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsToolIntegrationStatusRpc,
+  WsToolIntegrationRunRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
