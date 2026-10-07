@@ -19,7 +19,7 @@ const shared = {
 const WebSearchTool = Tool.make("web_search", {
   ...shared,
   description:
-    "Search the web through the web provider chosen for this environment. Returns titles, URLs, and short snippets; use web_fetch to read a result in full.",
+    "Search the web through the web provider chosen for this environment. Returns titles, URLs, and short snippets; use web_fetch to read a result in full. If it reports that T3 Code web tools are off, use your own web search instead.",
   parameters: Schema.Struct({
     query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_000)).annotate({
       description: "What to search for.",
@@ -48,7 +48,7 @@ const WebSearchTool = Tool.make("web_search", {
 
 const WebFetchTool = Tool.make("web_fetch", {
   ...shared,
-  description: `Fetch a web page through the web provider chosen for this environment and return its main content as markdown. Pages past ${WebTools.MAX_WEB_FETCH_CHARS.toLocaleString("en-US")} characters are cut and marked truncated.`,
+  description: `Fetch a web page through the web provider chosen for this environment and return its main content as markdown. Pages past ${WebTools.MAX_WEB_FETCH_CHARS.toLocaleString("en-US")} characters are cut and marked truncated. If it reports that T3 Code web tools are off, use your own web fetch instead.`,
   parameters: Schema.Struct({
     url: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)).annotate({
       description: "The http(s) URL of the page.",

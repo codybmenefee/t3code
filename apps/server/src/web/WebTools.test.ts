@@ -54,7 +54,7 @@ const withWebTools = <A, E>(
   );
 
 describe("WebTools", () => {
-  it.effect("searches through Firecrawl by default, without a key when none is saved", () =>
+  it.effect("searches through Firecrawl without a key when none is saved", () =>
     Effect.gen(function* () {
       const { sent, client } = recordingClient(200, {
         success: true,
@@ -65,7 +65,7 @@ describe("WebTools", () => {
           ],
         },
       });
-      const result = yield* withWebTools({}, client, (tools) =>
+      const result = yield* withWebTools({ provider: "firecrawl" }, client, (tools) =>
         tools.search({ query: "effect schema", limit: 50 }),
       );
 
@@ -95,8 +95,10 @@ describe("WebTools", () => {
           metadata: { title: "Example Domain", url: "https://example.com/" },
         },
       });
-      const result = yield* withWebTools({ firecrawlApiKey: "fc-test" }, client, (tools) =>
-        tools.fetch({ url: "https://example.com" }),
+      const result = yield* withWebTools(
+        { provider: "firecrawl", firecrawlApiKey: "fc-test" },
+        client,
+        (tools) => tools.fetch({ url: "https://example.com" }),
       );
 
       expect(sent).toEqual([
@@ -122,9 +124,9 @@ describe("WebTools", () => {
     }),
   );
 
-  it.effect("refuses without a request when the CLIs keep their own web tools", () =>
+  it.effect("is off by default and refuses without a request", () =>
     Effect.gen(function* () {
-      const error = yield* withWebTools({ provider: "builtin" }, refuseRequests, (tools) =>
+      const error = yield* withWebTools({}, refuseRequests, (tools) =>
         tools.search({ query: "anything" }),
       ).pipe(Effect.flip);
       expect(error._tag).toBe("WebToolsDisabledError");

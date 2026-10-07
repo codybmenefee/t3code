@@ -1,6 +1,7 @@
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  DEFAULT_WEB_TOOL_PROVIDER,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -370,7 +371,7 @@ export const layerWithOptions = (
       );
       // Built-in keeps each CLI's own web tools; any other provider replaces them.
       const nativeWebToolsDisabled = Option.match(serverSettings, {
-        onNone: () => Effect.succeed(true),
+        onNone: () => Effect.succeed(DEFAULT_WEB_TOOL_PROVIDER !== "builtin"),
         onSome: (service) =>
           service.getSettings.pipe(
             Effect.map((settings) => settings.web.provider !== "builtin"),

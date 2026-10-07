@@ -33,11 +33,15 @@ ACP fallback: some ACP agents accept the injected MCP server but fail to expose 
 ### Showing visuals
 
 When a chart, table, diagram, image collage, or mockup would say more than prose, build a self-contained HTML page, check it with \`html_preview\`, then publish it with \`html_render\` before your final reply. The reader sees the page above that reply, so don't announce or restate it; add only what it doesn't say.
-
-### Web search and fetch
-
-Use \`web_search\` to search the web and \`web_fetch\` to read a page, in place of your own web search and fetch tools; they go through the web provider the user picked for this environment. If they report that T3 Code web tools are off, use your own web tools for the rest of the session.
 `;
+
+/**
+ * Only for agents whose own web tools T3 Code cannot remove; the others lose
+ * theirs while a web provider is selected and need no steering.
+ */
+const T3_CODE_WEB_TOOL_INSTRUCTIONS = `## T3 Code web tools
+
+Use \`web_search\` to search the web and \`web_fetch\` to read a page, in place of your own web search and fetch tools; they go through the web provider the user picked for this environment. If they report that T3 Code web tools are off, use your own web tools for the rest of the session.`;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
@@ -61,6 +65,8 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
+  /** Set while a web provider other than Built-in is selected in Settings → Web. */
+  readonly webToolsPreferred?: boolean;
 }
 
 /**
@@ -76,7 +82,8 @@ export function t3AcpPromptWithInstructions(input: {
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
-    input.previousState.hasT3Mcp === input.state.hasT3Mcp
+    input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
+    (input.previousState.webToolsPreferred ?? false) === (input.state.webToolsPreferred ?? false)
   ) {
     return input.prompt;
   }
@@ -86,6 +93,9 @@ export function t3AcpPromptWithInstructions(input: {
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
       ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()]
+      : []),
+    ...(input.state.hasT3Mcp && input.state.webToolsPreferred === true
+      ? [T3_CODE_WEB_TOOL_INSTRUCTIONS]
       : []),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;

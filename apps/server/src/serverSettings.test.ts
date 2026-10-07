@@ -1588,14 +1588,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
-  it.effect("keeps web API keys in the secret store and defaults to Firecrawl", () =>
+  it.effect("keeps web API keys in the secret store and defaults to Built-in", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
 
-      assert.equal((yield* serverSettings.getSettings).web.provider, "firecrawl");
+      assert.equal((yield* serverSettings.getSettings).web.provider, "builtin");
 
       const saved = yield* serverSettings.updateSettings({
         web: { provider: "exa", firecrawlApiKey: "fc-key", exaApiKey: "exa-key" },

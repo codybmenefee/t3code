@@ -27,7 +27,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 const PROVIDER_DESCRIPTIONS: Record<WebToolProvider, string> = {
-  firecrawl: "Default. Works without an API key on eligible networks.",
+  firecrawl: "Works without an API key on eligible networks.",
   exa: "Needs an Exa API key.",
   tavily: "Needs a Tavily API key.",
   builtin: "Each CLI keeps its own web search and fetch.",
@@ -96,7 +96,11 @@ export function SettingsWebRouteScreen() {
                     <SettingsChoiceRow
                       key={value}
                       label={WEB_TOOL_PROVIDER_LABELS[value]}
-                      description={PROVIDER_DESCRIPTIONS[value]}
+                      description={
+                        value === DEFAULT_WEB_TOOL_PROVIDER
+                          ? `Default. ${PROVIDER_DESCRIPTIONS[value]}`
+                          : PROVIDER_DESCRIPTIONS[value]
+                      }
                       selected={provider === value}
                       separated={index > 0}
                       disabled={disabled}

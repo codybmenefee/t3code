@@ -6726,6 +6726,10 @@ export function makeAcpAdapterV2(
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: acpMcpServers(turnInput.threadId, self).length > 0,
+            // ACP agents keep their own web tools, so they are only steered to T3's.
+            webToolsPreferred:
+              McpProviderSession.readMcpProviderSession(turnInput.threadId)
+                ?.nativeWebToolsDisabled === true,
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({

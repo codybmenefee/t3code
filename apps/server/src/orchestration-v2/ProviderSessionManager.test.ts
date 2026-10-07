@@ -1285,20 +1285,20 @@ it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", ()
 );
 
 it.effect(
-  "ProviderSessionManagerV2 turns off native web tools unless the web provider is Built-in",
+  "ProviderSessionManagerV2 turns off native web tools only while a web provider is selected",
   () =>
     Effect.gen(function* () {
       const byDefault = yield* runBrowserAccessScenario({
         enableAgentBrowserAccess: true,
         projectOverride: true,
       });
-      assert.equal(byDefault?.nativeWebToolsDisabled, true);
-      const builtin = yield* runBrowserAccessScenario({
+      assert.equal(byDefault?.nativeWebToolsDisabled, false);
+      const firecrawl = yield* runBrowserAccessScenario({
         enableAgentBrowserAccess: true,
         projectOverride: true,
-        webProvider: "builtin",
+        webProvider: "firecrawl",
       });
-      assert.equal(builtin?.nativeWebToolsDisabled, false);
+      assert.equal(firecrawl?.nativeWebToolsDisabled, true);
     }),
 );
 

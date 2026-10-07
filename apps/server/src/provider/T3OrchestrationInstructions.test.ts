@@ -87,4 +87,19 @@ describe("T3 orchestration provider instructions", () => {
     assert.notInclude(withoutMcp, "T3 Code collaborative browser");
     assert.notInclude(withoutMcp, "T3 Code orchestration");
   });
+
+  it("steers ACP agents to T3's web tools only while a web provider is selected", () => {
+    const prompt = "Continue.";
+    const builtin = { interactionMode: "default", hasT3Mcp: true } as const;
+    const firecrawl = { ...builtin, webToolsPreferred: true } as const;
+
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt, state: builtin }), "web_search");
+    assert.include(t3AcpPromptWithInstructions({ prompt, state: firecrawl }), "web_search");
+    // Switching provider reinjects the guidance on the next prompt.
+    assert.include(
+      t3AcpPromptWithInstructions({ prompt, state: firecrawl, previousState: builtin }),
+      "T3 Code web tools",
+    );
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "web_search");
+  });
 });

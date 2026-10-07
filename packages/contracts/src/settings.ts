@@ -1019,7 +1019,7 @@ export type BitbucketSettings = typeof BitbucketSettings.Type;
  */
 export const WebToolProvider = Schema.Literals(["firecrawl", "exa", "tavily", "builtin"]);
 export type WebToolProvider = typeof WebToolProvider.Type;
-export const DEFAULT_WEB_TOOL_PROVIDER: WebToolProvider = "firecrawl";
+export const DEFAULT_WEB_TOOL_PROVIDER: WebToolProvider = "builtin";
 
 /**
  * Web tool settings for this environment. The API keys live in the server's
