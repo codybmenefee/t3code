@@ -3063,20 +3063,10 @@ export function makeOpenCodeAdapterV2(
               // Only a row that already carries a native session can be
               // resumed; a placeholder without one still needs session.create.
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
-                const resumed = yield* runtimeSession.resumeThread({
+                return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
-                // A session keeps the rules it was created with; the web provider
-                // or runtime policy may have changed since.
-                const sessionId = nativeThreadId(resumed);
-                const permission = openCodePermissionRules(
-                  threadInput.runtimePolicy,
-                  nativeWebToolsDisabled,
-                );
-                yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
-                  client.session.update({ sessionID: sessionId, permission }),
-                );
-                return resumed;
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).
@@ -3140,6 +3130,17 @@ export function makeOpenCodeAdapterV2(
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              // A session keeps the rules it was created with; the web provider
+              // or runtime policy may have changed since.
+              if (threadInput.runtimePolicy !== undefined) {
+                const permission = openCodePermissionRules(
+                  threadInput.runtimePolicy,
+                  nativeWebToolsDisabled,
+                );
+                yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                  client.session.update({ sessionID: sessionId, permission }),
+                );
+              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,

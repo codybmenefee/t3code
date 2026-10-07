@@ -2376,7 +2376,7 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(IdAllocator.layer)),
   );
 
-  it.effect("rewrites a resumed session's rules for the current web provider", () =>
+  it.effect("rewrites a resumed session's rules for the current web provider, both ways", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -2433,16 +2433,57 @@ describe("OpenCodeAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("opencode");
       const threadId = ThreadId.make("thread-opencode-resume-web-rules");
       const modelSelection = { instanceId, model: "default" };
-      McpProviderSession.setMcpProviderSession({
-        environmentId: EnvironmentId.make("environment-opencode-resume"),
-        threadId,
-        providerSessionId: "mcp-session-opencode-resume",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-opencode-token",
-        browserToolsAvailable: true,
-        nativeWebToolsDisabled: true,
-      });
+      // Each provider session reads the web provider when it opens.
+      const resumeWith = (nativeWebToolsDisabled: boolean) =>
+        Effect.gen(function* () {
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make("environment-opencode-resume"),
+            threadId,
+            providerSessionId: "mcp-session-opencode-resume",
+            providerInstanceId: instanceId,
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer secret-opencode-token",
+            browserToolsAvailable: true,
+            nativeWebToolsDisabled,
+          });
+          const session = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              `provider-session-opencode-resume-${nativeWebToolsDisabled}`,
+            ),
+            modelSelection,
+            runtimePolicy: runtimePolicy("full-access"),
+          });
+          const now = yield* DateTime.now;
+          // The path ProviderTurnStartService takes for an existing conversation.
+          yield* session.resumeThread({
+            threadId,
+            modelSelection,
+            runtimePolicy: runtimePolicy("full-access"),
+            providerThread: {
+              id: ProviderThreadId.make("thread:provider:opencode:native-thread:ses_existing"),
+              driver: OPENCODE_PROVIDER,
+              providerInstanceId: instanceId,
+              providerSessionId: null,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: {
+                driver: OPENCODE_PROVIDER,
+                nativeId: "ses_existing",
+                strength: "strong",
+              },
+              nativeConversationHeadRef: null,
+              status: "not_loaded",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          return updates.at(-1)!;
+        });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
       );
@@ -2454,43 +2495,16 @@ describe("OpenCodeAdapterV2", () => {
         idAllocator,
         serverConfig,
       });
-      const session = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-opencode-resume"),
-        modelSelection,
-        runtimePolicy: runtimePolicy("full-access"),
-      });
-      const now = yield* DateTime.now;
-      yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy: runtimePolicy("full-access"),
-        existingProviderThread: {
-          id: ProviderThreadId.make("thread:provider:opencode:native-thread:ses_existing"),
-          driver: OPENCODE_PROVIDER,
-          providerInstanceId: instanceId,
-          providerSessionId: null,
-          appThreadId: threadId,
-          ownerNodeId: null,
-          nativeThreadRef: {
-            driver: OPENCODE_PROVIDER,
-            nativeId: "ses_existing",
-            strength: "strong",
-          },
-          nativeConversationHeadRef: null,
-          status: "not_loaded",
-          firstRunOrdinal: 1,
-          lastRunOrdinal: 1,
-          handoffIds: [],
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-      assert.equal(updates.length, 1);
-      assert.equal(updates[0]?.sessionID, "ses_existing");
-      assert.equal(permissionAction(updates[0]!.permission, "websearch"), "deny");
-      assert.equal(permissionAction(updates[0]!.permission, "webfetch"), "deny");
+
+      // Built-in → Firecrawl: OpenCode's own web tools are denied on reopen.
+      const disabled = yield* resumeWith(true);
+      assert.equal(disabled.sessionID, "ses_existing");
+      assert.equal(permissionAction(disabled.permission, "websearch"), "deny");
+      assert.equal(permissionAction(disabled.permission, "webfetch"), "deny");
+      // Firecrawl → Built-in: they are allowed again, not left denied.
+      const restored = yield* resumeWith(false);
+      assert.equal(permissionAction(restored.permission, "websearch"), "allow");
+      assert.equal(permissionAction(restored.permission, "webfetch"), "allow");
     }).pipe(
       Effect.scoped,
       Effect.provide(
